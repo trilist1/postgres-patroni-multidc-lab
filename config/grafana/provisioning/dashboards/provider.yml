@@ -6,6 +6,7 @@ providers:
     type: file
     disableDeletion: false
     editable: true
+    updateIntervalSeconds: 10   # poll: file events don't cross the Windows bind mount
     options:
       path: /var/lib/grafana/dashboards
       foldersFromFilesStructure: false

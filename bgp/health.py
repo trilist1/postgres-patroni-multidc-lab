@@ -102,11 +102,24 @@ class Prefix:
 
 
 write_vip, read_vip = Prefix(VIP), Prefix(VIP_READ)
+# Watchdog: this container shares HAProxy's network namespace. If HAProxy is
+# restarted outside Compose, we're left in a dead namespace (no interfaces).
+# After WATCHDOG_FAILS consecutive misses, end the whole container on purpose;
+# Docker's restart policy brings it back inside HAProxy's current namespace.
+WATCHDOG_FAILS = int(os.environ.get("WATCHDOG_FAILS", "10"))
+misses = 0
 while True:
     try:
         hp, err = haproxy_state(), None
+        misses = 0
     except Exception as e:
         hp, err = {"write": {}, "read": {}, "read_any": {}}, f"local HAProxy not answering ({type(e).__name__})"
+        misses += 1
+        if misses >= WATCHDOG_FAILS:
+            sys.stderr.write(f"local HAProxy unreachable {misses} times in a row; restarting the speaker\n")
+            sys.stderr.flush()
+            os.kill(1, 15)          # PID 1 is exabgp (exec'd by entrypoint.sh): stop the container
+            time.sleep(30)
     lead = leader()
     up_replicas = [s for s, v in hp["read"].items() if s != "BACKEND" and v == "UP"]
     up_readable = [s for s, v in hp["read_any"].items() if s != "BACKEND" and v == "UP"]

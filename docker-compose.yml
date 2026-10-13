@@ -293,7 +293,7 @@ services:
       - "9187:9187"
     environment:
       - "DATA_SOURCE_NAME=postgresql://postgres:SuperSecret2026@patroni1:5432/postgres?sslmode=disable"
-    command: ["--collector.stat_checkpointer", "--collector.stat_statements", "--collector.long_running_transactions"]
+    command: ["--collector.stat_checkpointer", "--collector.stat_statements", "--collector.stat_statements.include_query", "--collector.long_running_transactions"]
     depends_on:
       - "patroni1"
   pg-exporter2:
@@ -309,7 +309,7 @@ services:
       - "9188:9187"
     environment:
       - "DATA_SOURCE_NAME=postgresql://postgres:SuperSecret2026@patroni2:5432/postgres?sslmode=disable"
-    command: ["--collector.stat_checkpointer", "--collector.stat_statements", "--collector.long_running_transactions"]
+    command: ["--collector.stat_checkpointer", "--collector.stat_statements", "--collector.stat_statements.include_query", "--collector.long_running_transactions"]
     depends_on:
       - "patroni2"
   pg-exporter3:
@@ -325,7 +325,7 @@ services:
       - "9189:9187"
     environment:
       - "DATA_SOURCE_NAME=postgresql://postgres:SuperSecret2026@patroni3:5432/postgres?sslmode=disable"
-    command: ["--collector.stat_checkpointer", "--collector.stat_statements", "--collector.long_running_transactions"]
+    command: ["--collector.stat_checkpointer", "--collector.stat_statements", "--collector.stat_statements.include_query", "--collector.long_running_transactions"]
     depends_on:
       - "patroni3"
   prometheus:
@@ -361,7 +361,7 @@ services:
     environment:
       - "GF_SECURITY_ADMIN_USER=admin"
       - "GF_SECURITY_ADMIN_PASSWORD=GrafanaAdmin2026"
-      - "GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/pg-ha-cluster.json"
+      - "GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/pg-ha-overview.json"
     volumes:
       - "./config/grafana/provisioning:/etc/grafana/provisioning:ro"
       - "./config/grafana/dashboards:/var/lib/grafana/dashboards:ro"

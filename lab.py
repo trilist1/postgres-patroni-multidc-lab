@@ -322,6 +322,13 @@ listen stats
     stats show-node
     stats auth {S['haproxy_stats_user']}:{S['haproxy_stats_password']}
 
+# Built-in Prometheus exporter, scraped by Prometheus (not published to the host).
+frontend prometheus
+    mode http
+    bind *:8404
+    http-request use-service prometheus-exporter if {{ path /metrics }}
+    no log
+
 listen postgresql_write
     bind *:5000
     option httpchk GET /primary
@@ -417,6 +424,8 @@ def prometheus_yml():
                     f'          cluster: "{S["cluster"]}"\n          pg_node: "{p}"\n'
                     f'          dc: "{DCS[dc_of(p)]["name"]}"' for p in ALL_PATRONI)
     etc = "\n".join(f'          - "{e}:2379"' for e in ALL_ETCD)
+    hap = "\n".join(f'      - targets: ["{d["haproxy"]["name"]}:8404"]\n        labels:\n          dc: "{d["name"]}"'
+                    for d in DCS.values() if d["haproxy"])
     return f"""global:
   scrape_interval: 15s
   evaluation_interval: 15s
@@ -446,6 +455,18 @@ scrape_configs:
     static_configs:
       - targets:
 {etc}
+
+  # HAProxy's built-in exporter, one per data center.
+  - job_name: "haproxy"
+    scrape_interval: 10s
+    static_configs:
+{hap}
+
+  # BGP / VIP routing and simulated data-center state, served by the landing page.
+  - job_name: "lab"
+    scrape_interval: 5s
+    static_configs:
+      - targets: ["landing:8080"]
 """
 
 
@@ -466,6 +487,7 @@ providers:
     type: file
     disableDeletion: false
     editable: true
+    updateIntervalSeconds: 10   # poll: file events don't cross the Windows bind mount
     options:
       path: /var/lib/grafana/dashboards
       foldersFromFilesStructure: false
@@ -583,7 +605,8 @@ def compose_doc():
             "networks": nets(dc, wan=False),     # local to its data center
             "ports": [f"{port}:9187"],
             "environment": [f"DATA_SOURCE_NAME={dsn.format(p)}"],
-            "command": ["--collector.stat_checkpointer", "--collector.stat_statements", "--collector.long_running_transactions"],
+            "command": ["--collector.stat_checkpointer", "--collector.stat_statements",
+                        "--collector.stat_statements.include_query", "--collector.long_running_transactions"],
             "depends_on": [p],
         }
     every_dc = {f"dc-{k}": {} for k in DCS}
@@ -600,7 +623,7 @@ def compose_doc():
         "networks": {"wan": {"ipv4_address": S["grafana_wan_ip"]}},
         "ports": [f"{S['grafana_port']}:3000"],
         "environment": [f"GF_SECURITY_ADMIN_USER={S['grafana_user']}", f"GF_SECURITY_ADMIN_PASSWORD={S['grafana_password']}",
-                        "GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/pg-ha-cluster.json"],
+                        "GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/pg-ha-overview.json"],
         "volumes": ["./config/grafana/provisioning:/etc/grafana/provisioning:ro",
                     "./config/grafana/dashboards:/var/lib/grafana/dashboards:ro", "./grafana-data:/var/lib/grafana"],
         "depends_on": ["prometheus"],
@@ -656,6 +679,24 @@ chmod 600 *.key haproxy-combined.pem
 """
 
 
+def reload_grafana():
+    """Ask a running Grafana to re-read the provisioned dashboards.
+
+    Grafana doesn't notice file changes through a Windows bind mount, so without
+    this a regenerated dashboard only appears after a Grafana restart.
+    """
+    import base64
+    req = urllib.request.Request(f"http://localhost:{S['grafana_port']}/api/admin/provisioning/dashboards/reload",
+                                 method="POST", data=b"")
+    auth = base64.b64encode(f"{S['grafana_user']}:{S['grafana_password']}".encode()).decode()
+    req.add_header("Authorization", "Basic " + auth)
+    try:
+        urllib.request.urlopen(req, timeout=3)
+        log("Grafana reloaded the dashboards", "OK")
+    except Exception:
+        pass   # Grafana not running yet: it loads them when it starts
+
+
 def cmd_generate(_args=None):
     log("Creating folders")
     for d in ["config/haproxy", "config/prometheus", "config/edge", "config/landing",
@@ -681,11 +722,12 @@ def cmd_generate(_args=None):
     write("config/grafana/provisioning/datasources/datasource.yml", GRAFANA_DS)
     write("config/grafana/provisioning/dashboards/provider.yml", GRAFANA_PROVIDER)
     write("config/landing/topology.json", json.dumps(topology(), indent=2))
-    log("Generating Grafana dashboard")
-    r = subprocess.run([sys.executable, str(BASE / "gen_monitoring.py"),
-                        str(BASE / "config/grafana/dashboards/pg-ha-cluster.json")], capture_output=True, text=True)
+    log("Generating Grafana dashboards")
+    r = subprocess.run([sys.executable, str(BASE / "grafana_dashboards.py"),
+                        str(BASE / "config/grafana/dashboards")], capture_output=True, text=True)
     if r.returncode != 0:
         log(f"dashboard generation failed: {r.stderr.strip()[:200]}", "WARN")
+    reload_grafana()
     write("docker-compose.yml", COMPOSE_HEADER + yaml(compose_doc()) + "\n")
     if not STATE_FILE.exists():
         save_state({"down": [], "partitioned": []})

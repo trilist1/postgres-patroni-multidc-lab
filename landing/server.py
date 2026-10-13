@@ -233,6 +233,72 @@ def lab_state():
         return {"down": [], "partitioned": []}
 
 
+def lab_metrics():
+    """Prometheus text format: BGP/VIP routing and simulated data-center state.
+
+    Read from the status files only (no network probes), so it is cheap to scrape
+    every few seconds. lab_node_info maps every node to its data center so Grafana
+    can join it onto Patroni/etcd/exporter metrics.
+    """
+    out = []
+
+    def metric(name, help_, typ="gauge"):
+        out.append(f"# HELP {name} {help_}\n# TYPE {name} {typ}")
+
+    def sample(name, labels, value):
+        lab = ",".join(f'{k}="{v}"' for k, v in labels.items())
+        out.append(f"{name}{{{lab}}} {value}")
+
+    st = lab_state()
+    metric("lab_dc_powered_off", "1 while the data center is powered off by a drill")
+    for k, d in DCS.items():
+        sample("lab_dc_powered_off", {"dc": k, "dc_name": d["name"]}, int(k in st.get("down", [])))
+    metric("lab_dc_partitioned", "1 while the data center is cut off from the WAN by a drill")
+    for k, d in DCS.items():
+        sample("lab_dc_partitioned", {"dc": k, "dc_name": d["name"]}, int(k in st.get("partitioned", [])))
+
+    metric("lab_node_info", "Which data center a node lives in (always 1)")
+    for n, k in sorted(DC_OF.items()):
+        sample("lab_node_info", {"name": n, "dc": k, "dc_name": DCS[k]["name"]}, 1)
+
+    try:
+        edge = probe_edge()
+    except Exception:
+        edge = {"sessions": {}, "write_paths": [], "read_paths": []}
+    metric("lab_bgp_session_up", "1 when the edge router's BGP session to this DC is Established")
+    for k, d in DCS.items():
+        if d["bgp"]:
+            up = edge["sessions"].get(k, {}).get("state") == "Established"
+            sample("lab_bgp_session_up", {"dc": k, "dc_name": d["name"]}, int(up))
+
+    metric("lab_vip_announced", "1 while this DC's BGP speaker announces the VIP")
+    metric("lab_vip_med", "MED this DC announces the VIP with (only while announced)")
+    metric("lab_vip_active", "1 for the DC whose route the edge router uses for the VIP")
+    meds = []
+    for k, d in DCS.items():
+        if not d["bgp"]:
+            continue
+        try:
+            sp = read_status_file(d["bgp"])
+        except Exception:
+            sp = {}
+        for kind in ("write", "read"):
+            v = sp.get(kind, {})
+            labels = {"vip": kind, "address": TOPO["vip"] if kind == "write" else TOPO["vip_read"],
+                      "dc": k, "dc_name": d["name"]}
+            sample("lab_vip_announced", labels, int(bool(v.get("announcing"))))
+            if v.get("announcing"):
+                meds.append(("lab_vip_med", labels, v.get("med")))
+            active = edge.get("write_dc" if kind == "write" else "read_dc") == k
+            sample("lab_vip_active", labels, int(active))
+    out.extend(f"{n}{{{','.join(f'{a}=\"{b}\"' for a, b in l.items())}}} {v}" for n, l, v in meds)
+
+    metric("lab_vip_routed", "1 while the edge router has any route for the VIP")
+    for kind, key in (("write", "write_dc"), ("read", "read_dc")):
+        sample("lab_vip_routed", {"vip": kind}, int(bool(edge.get(key))))
+    return "\n".join(out) + "\n"
+
+
 def probe_exporter(name):
     code, text = fetch(f"http://{name}:9187/metrics", timeout=5.0)  # a full scrape can take >2 s
     m = re.search(r"^pg_up(?:\{[^}]*\})?\s+([0-9.]+)", text, re.M)
@@ -526,6 +592,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, (APP_DIR / "index.html").read_bytes(), "text/html")
         if path == "/healthz":
             return self._send(200, '{"ok":true}')
+        if path == "/metrics":
+            return self._send(200, lab_metrics(), "text/plain; version=0.0.4")
         if path == "/api/status":
             return self._send(200, json.dumps(collect_status()))
         m = re.fullmatch(r"/api/config/([A-Za-z0-9_-]+)", path)
@@ -561,7 +629,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, json.dumps(result))
 
     def log_message(self, fmt, *args):
-        if not self.path.startswith(("/api/status", "/api/history", "/healthz")):
+        if not self.path.startswith(("/api/status", "/api/history", "/healthz", "/metrics")):
             super().log_message(fmt, *args)
 
 
