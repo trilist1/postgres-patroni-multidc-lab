@@ -136,7 +136,7 @@ In `cmd`, type `lab <command>` from the repo folder; in **PowerShell** type `.\l
 | `lab setup [--restore FILE]` | Generate, build, start, post-setup, optional restore |
 | `lab generate` | Rewrite `docker-compose.yml` and every config from `lab.py` |
 | `lab build` | Build the Patroni, BGP speaker and edge router images |
-| `lab up` / `lab stop` / `lab down` | Start, stop (keep containers), remove containers (data kept) |
+| `lab up` / `lab stop` / `lab down` | Start, stop (keep containers), remove containers (data kept). Also start / stop the drill runner |
 | `lab status` | Data-center state, `patronictl list`, BGP table |
 | `lab bgp` | The edge router's sessions and both VIP routes |
 | `lab dc-down <a\|b\|c> [--graceful]` | Power cut for a whole DC (SIGKILL). `--graceful` stops it cleanly |
@@ -144,7 +144,7 @@ In `cmd`, type `lab <command>` from the repo folder; in **PowerShell** type `.\l
 | `lab partition <a\|b\|c>` | Cut a DC off the WAN. Its containers keep running and still see each other |
 | `lab heal <a\|b\|c>` | Reconnect it |
 | `lab restore FILE` | Load a `pg_dumpall` file into the current primary |
-| `lab drills [start]` | Run the drill runner behind the landing page's data-center buttons (`start` opens it in its own window) |
+| `lab drills [start\|stop\|status\|run]` | The background runner behind the landing page's data-center buttons (started by `lab up`, log in `state\drills-runner.log`) |
 | `lab logs [service]` | Follow logs |
 | `lab remove [--data]` | Remove containers and images (`--data` also deletes the data folders) |
 
@@ -211,19 +211,26 @@ members, so nothing should change" for the witness. It warns when another DC is 
 losing a second one leaves etcd without a quorum. After you confirm, the page shows the result and
 the diagram, VIP panel and Grafana annotations follow the failover live.
 
-**How it works, and why there's a runner.** The landing page container has no access to Docker (giving
-a container the Docker socket would hand it control of your whole Docker host). Instead, a button
-queues a request file in `state\requests\`, and the **drill runner**, a loop in `lab.py` running on
-your machine with your Docker CLI, carries it out with exactly the same code as `lab dc-down`,
-`lab dc-up`, `lab partition` and `lab heal`. It accepts only those actions, for DC-A, DC-B or DC-C.
+**How it works.** The landing page container has no access to Docker: giving a web-facing
+container the Docker socket would hand it control of your whole Docker host. Instead, a button
+queues a request file in `state\requests\`, and the **drill runner**, a small loop in `lab.py`
+running in the background on your machine with your Docker CLI, carries it out with exactly the same
+code as `lab dc-down`, `lab dc-up`, `lab partition` and `lab heal`. It accepts only those actions,
+for DC-A, DC-B or DC-C, and usually answers within a second.
+
+The runner has no window. `lab up` and `lab setup` start it, `lab stop` and `lab down` stop it, and
+it keeps running after you close the terminal. To manage it by hand:
 
 ```cmd
-lab drills start      REM opens the runner in its own window; close the window to stop it
-lab drills            REM or run it in the current terminal (Ctrl+C to stop)
+lab drills status     REM is it running, and is it busy?
+lab drills start      REM start it in the background (no window)
+lab drills stop       REM stop it
+lab drills run        REM run it in this terminal instead, for debugging (Ctrl+C to stop)
 ```
 
-While the runner isn't running the buttons are disabled and the panel says how to start it. The
-landing page is bound to `127.0.0.1:9090`, so only your own machine can press them.
+Its output goes to `state\drills-runner.log`. While it isn't running, the buttons are disabled and
+the panel says how to start it. The landing page is bound to `127.0.0.1:9090`, so only your own
+machine can press them.
 
 ---
 
@@ -368,7 +375,7 @@ postgres-patroni-multidc-lab\        ← wherever you cloned it
 | A node stays `stopped` after `lab dc-up` | It's waiting for an etcd member | Check `lab status`; it needs any healthy etcd member |
 | Landing page shows a DC as "Powered off" but it's running | You started it with `docker start` instead of `lab dc-up` | Run `lab dc-up <dc>` to update `state/lab-state.json` |
 | pgAdmin access violation | See [Connecting with pgAdmin](#connecting-with-pgadmin) | `gssencmode=disable` |
-| Data center buttons are greyed out | The drill runner isn't running | `lab drills start` from the repo folder |
+| Data center buttons are greyed out | The drill runner isn't running (e.g. after a reboot) | `lab up` or `lab drills start`; details in `state\drills-runner.log` |
 | A button says "Another failure simulation is still queued" | A request is waiting in `state\requests\` (runner was stopped) | Start the runner, or delete the file |
 
 ---

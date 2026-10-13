@@ -677,7 +677,7 @@ function renderDcs(data) {
   rn.className = "runner" + (runner.online ? "" : " off");
   rn.innerHTML = runner.online
     ? (runner.busy ? `Drill runner is working: ${runner.busy}…` : "Drill runner connected. Buttons are live.")
-    : `Buttons are off: the drill runner isn't running. In the repo folder run <code>lab drills start</code> (or <code>.\\lab drills start</code> in PowerShell).`;
+    : `Buttons are off: the drill runner isn't running. It starts with <code>lab up</code>; or run <code>lab drills start</code> in the repo folder.`;
   const list = document.getElementById("dc-list");
   list.replaceChildren();
   Object.entries(T.dcs).forEach(([k, d]) => {

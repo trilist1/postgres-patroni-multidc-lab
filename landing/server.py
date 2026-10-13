@@ -413,7 +413,7 @@ def queue_drill(dc, action):
     if dc not in DCS or action not in DRILL_ACTIONS:
         return 400, {"ok": False, "message": "Unknown data center or action."}
     if not drill_runner()["online"]:
-        return 503, {"ok": False, "message": "The drill runner isn't running. Start it from the repo folder: lab drills start"}
+        return 503, {"ok": False, "message": "The drill runner isn't running. It starts with lab up, or run: lab drills start"}
     if list(REQ_DIR.glob("*.json")):
         return 409, {"ok": False, "message": "Another failure simulation is still queued. Wait for it to finish."}
     rid = f"{int(time.time())}-{os.urandom(4).hex()}"

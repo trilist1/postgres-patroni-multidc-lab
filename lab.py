@@ -12,7 +12,8 @@ Usage:  lab <command> [args]        (lab.cmd wraps this on Windows)
   setup [--restore FILE]   generate + build + start + post-setup (+ restore a pg_dumpall)
   generate                 write docker-compose.yml and every config file
   build                    build the Patroni, BGP speaker and edge router images
-  up | stop | down         start / stop (keep containers) / remove containers (data kept)
+  up | stop | down         start / stop (keep containers) / remove containers (data kept);
+                           also starts / stops the drill runner
   status                   cluster, BGP and data-center state
   logs [service]           follow logs
   bgp                      the edge router's BGP table and sessions
@@ -21,8 +22,8 @@ Usage:  lab <command> [args]        (lab.cmd wraps this on Windows)
   partition <a|b|c>        cut a data center off the WAN (containers keep running)
   heal <a|b|c>             reconnect it to the WAN
   restore FILE             load a pg_dumpall file into the current primary
-  drills [start]           run the drill runner behind the landing page's DC failure buttons
-                           (start = open it in its own window on Windows)
+  drills [start|stop|status]  the hidden background runner behind the landing page's
+                           DC failure buttons (lab up starts it; log: state/drills-runner.log)
   remove [--data]          remove containers and images (--data also deletes data folders)
 
 Everything is configured in SETTINGS / DCS below. Standard library only (Python 3.10+).
@@ -806,6 +807,7 @@ def cmd_setup(args):
     cmd_post_setup()
     if args and args[0] == "--restore":
         cmd_restore(args[1:])
+    drills_start()
     print(f"""
 ==================================================================
  SETUP COMPLETE
@@ -816,7 +818,7 @@ def cmd_setup(args):
  DC-B HAProxy      localhost:5100 write, :5101 read, http://localhost:7100 stats
  Grafana           http://localhost:{S['grafana_port']}  ({S['grafana_user']}/{S['grafana_password']})
  Prometheus        http://localhost:{S['prometheus_port']}
- DC failure drills lab drills start   (enables the buttons on the landing page)
+ DC failure drills buttons on the landing page (runner started in the background)
                    or from the CLI: lab dc-down a / lab dc-up a / lab partition b / lab heal b
 """)
 
@@ -967,24 +969,94 @@ def _runner_beat(busy=None, last=None, started=None):
     os.replace(tmp, RUNNER_FILE)
 
 
-def cmd_drills(args):
-    if args and args[0] == "start":
-        # Convenience on Windows: run the loop in its own, visible console window.
+STOP_FILE = BASE / "state" / "drills-runner.stop"
+RUNNER_LOG = BASE / "state" / "drills-runner.log"
+
+
+def runner_alive():
+    try:
+        return time.time() - float(json.loads(RUNNER_FILE.read_text())["updated"]) < 6
+    except (OSError, ValueError, KeyError):
+        return False
+
+
+def drills_start(quiet=False):
+    """Start the runner in the background: no window, survives this terminal."""
+    if runner_alive():
+        return quiet or log("Drill runner is already running", "OK")
+    (BASE / "state").mkdir(exist_ok=True)
+    STOP_FILE.unlink(missing_ok=True)
+    logf = open(RUNNER_LOG, "w", encoding="utf-8")
+    kw = {"cwd": BASE, "stdin": subprocess.DEVNULL, "stdout": logf, "stderr": subprocess.STDOUT}
+    if os.name == "nt":
+        # A hidden console of its own: no window, and the docker.exe calls it makes
+        # don't flash windows either. Detached from the terminal that started it.
+        kw["creationflags"] = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kw["start_new_session"] = True
+    subprocess.Popen([sys.executable, "-u", str(Path(__file__).resolve()), "drills", "run"], **kw)
+    for _ in range(20):
+        if runner_alive():
+            return quiet or log(f"Drill runner started in the background (log: state\\{RUNNER_LOG.name})", "OK")
+        time.sleep(0.5)
+    log(f"Drill runner didn't report in; see state\\{RUNNER_LOG.name}", "WARN")
+
+
+def drills_stop(quiet=False):
+    if not runner_alive():
+        RUNNER_FILE.unlink(missing_ok=True)
+        return quiet or log("Drill runner isn't running", "OK")
+    STOP_FILE.write_text("stop")                  # the loop checks this every second
+    for _ in range(10):
+        if not runner_alive() and not RUNNER_FILE.exists():
+            return quiet or log("Drill runner stopped", "OK")
+        time.sleep(0.5)
+    try:                                           # still there: end it by PID
+        pid = int(json.loads(RUNNER_FILE.read_text())["pid"])
         if os.name == "nt":
-            subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "drills"],
-                             cwd=BASE, creationflags=subprocess.CREATE_NEW_CONSOLE)
-            return log("Drill runner started in a new window. Close that window to stop it.", "OK")
-        return log("Run `python lab.py drills` in its own terminal.", "INFO")
+            run(["taskkill", "/PID", str(pid), "/F"], check=False, quiet=True, capture=True)
+        else:
+            os.kill(pid, 15)
+    except (OSError, ValueError, KeyError):
+        pass
+    RUNNER_FILE.unlink(missing_ok=True)
+    quiet or log("Drill runner stopped", "OK")
+
+
+def cmd_drills(args):
+    sub = args[0] if args else "status"
+    if sub == "start":
+        return drills_start()
+    if sub == "stop":
+        return drills_stop()
+    if sub == "status":
+        if runner_alive():
+            st = json.loads(RUNNER_FILE.read_text())
+            return log(f"Drill runner running (pid {st['pid']}), busy: {st.get('busy') or 'no'}. Log: state\\{RUNNER_LOG.name}", "OK")
+        return log("Drill runner isn't running. Start it: lab drills start", "INFO")
+    if sub != "run":
+        raise SystemExit("usage: lab drills [start|stop|status|run]")
+    # --- the loop itself (lab drills run: foreground, useful for debugging) ---
     REQ_DIR.mkdir(parents=True, exist_ok=True)
     (REQ_DIR / "results").mkdir(exist_ok=True)
+    STOP_FILE.unlink(missing_ok=True)
     started = time.time()
-    print(f"""
- Drill runner for the landing page (http://localhost:{S['landing_port']})
- Waiting for data-center failure requests. Keep this window open; Ctrl+C to stop.
-""", flush=True)
+    print(f"[{time.strftime('%H:%M:%S')}] drill runner {os.getpid()} waiting for requests from "
+          f"http://localhost:{S['landing_port']}", flush=True)
     last = None
     try:
         while True:
+            if STOP_FILE.exists():
+                STOP_FILE.unlink(missing_ok=True)
+                break
+            try:                                   # another runner took over: let it
+                cur = json.loads(RUNNER_FILE.read_text())
+                if cur.get("pid") != os.getpid() and time.time() - float(cur.get("updated", 0)) < 3 \
+                        and float(cur.get("started") or 0) > started:
+                    print("another drill runner started; exiting", flush=True)
+                    return
+            except (OSError, ValueError):
+                pass
             _runner_beat(last=last, started=started)
             for f in sorted(REQ_DIR.glob("*.json")):
                 try:
@@ -1010,14 +1082,29 @@ def cmd_drills(args):
                 _runner_beat(last=last, started=started)
             time.sleep(1)
     except KeyboardInterrupt:
-        RUNNER_FILE.unlink(missing_ok=True)
-        print("\nDrill runner stopped.")
+        pass
+    RUNNER_FILE.unlink(missing_ok=True)
+    print(f"[{time.strftime('%H:%M:%S')}] drill runner stopped", flush=True)
+
+
+def cmd_up(_args=None):
+    compose("up", "-d")
+    drills_start()
+
+
+def cmd_stop(_args=None):
+    drills_stop()
+    compose("stop")
+
+
+def cmd_down(_args=None):
+    drills_stop()
+    compose("down")
 
 
 COMMANDS = {
     "setup": cmd_setup, "generate": cmd_generate, "build": cmd_build, "drills": cmd_drills,
-    "up": lambda a: compose("up", "-d"), "start": lambda a: compose("up", "-d"),
-    "stop": lambda a: compose("stop"), "down": lambda a: compose("down"),
+    "up": cmd_up, "start": cmd_up, "stop": cmd_stop, "down": cmd_down,
     "status": cmd_status, "logs": lambda a: compose("logs", "-f", "--tail", "100", *a, check=False),
     "bgp": cmd_bgp, "dc-down": cmd_dc_down, "dc-up": cmd_dc_up,
     "partition": cmd_partition, "heal": cmd_heal,
@@ -1027,7 +1114,7 @@ COMMANDS = {
 
 def menu():
     items = [("setup", "Full setup (generate, build, start)"), ("status", "Status"), ("bgp", "BGP table"),
-             ("drills start", "Start the drill runner (landing page DC buttons)"),
+             ("drills status", "Drill runner status (landing page DC buttons)"),
              ("dc-down a", "Power off DC-A"), ("dc-up a", "Power on DC-A"),
              ("dc-down b", "Power off DC-B"), ("dc-up b", "Power on DC-B"),
              ("partition a", "Partition DC-A from the WAN"), ("heal a", "Heal DC-A"),
