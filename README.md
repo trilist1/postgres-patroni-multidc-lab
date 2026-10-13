@@ -144,6 +144,7 @@ In `cmd`, type `lab <command>` from the repo folder; in **PowerShell** type `.\l
 | `lab partition <a\|b\|c>` | Cut a DC off the WAN. Its containers keep running and still see each other |
 | `lab heal <a\|b\|c>` | Reconnect it |
 | `lab restore FILE` | Load a `pg_dumpall` file into the current primary |
+| `lab drills [start]` | Run the drill runner behind the landing page's data-center buttons (`start` opens it in its own window) |
 | `lab logs [service]` | Follow logs |
 | `lab remove [--data]` | Remove containers and images (`--data` also deletes the data folders) |
 
@@ -167,7 +168,7 @@ Notes:
 | patroni1 / 2 / 3 REST API | 8008 / 8009 / 8010 | |
 | etcd1 / 2 / 3 | 2379 / 2381 / 2383 | |
 | pg-exporter1 / 2 / 3 | 9187 / 9188 / 9189 | |
-| Landing page | **9090** | |
+| Landing page | **9090** | Bound to `127.0.0.1` only: it can trigger switchovers and DC failures |
 | Prometheus | 9091 | 12 scrape targets incl. both HAProxies and the lab's `/metrics` |
 | Grafana | 3000 | `admin` / `GrafanaAdmin2026` |
 
@@ -188,9 +189,41 @@ Notes:
   withdraws.
 - **Change leader**: planned switchover or emergency failover to any node, with confirmation. The
   write VIP follows the new primary to its DC within about 2 seconds.
+- **Data centers**: buttons to **Cut power**, **Cut from WAN**, **Power on** and **Reconnect** each
+  data center (see below).
 - **View config** on any box: its compose definition, mounted files and running config (Patroni DCS
   config, Prometheus config, etcd members, the edge router's BGP table, a speaker's current decision).
   Passwords are masked unless you tick **Show secrets**.
+
+### Simulating a data-center failure from the page
+
+The **Data centers** panel has one row per DC with buttons for its current state:
+
+| DC state | Buttons |
+|----------|---------|
+| Running | **Cut power** (SIGKILL every container, with an optional *graceful shutdown* tick box), **Cut from WAN** |
+| Powered off | **Power on** |
+| Cut off from the WAN | **Reconnect**, **Cut power** |
+
+Each action asks for confirmation and says what will happen *right now*, for example "the primary
+patroni1 is here, so writes stop for about 30 s until another DC is promoted", or "etcd keeps 2 of 3
+members, so nothing should change" for the witness. It warns when another DC is already out, because
+losing a second one leaves etcd without a quorum. After you confirm, the page shows the result and
+the diagram, VIP panel and Grafana annotations follow the failover live.
+
+**How it works, and why there's a runner.** The landing page container has no access to Docker (giving
+a container the Docker socket would hand it control of your whole Docker host). Instead, a button
+queues a request file in `state\requests\`, and the **drill runner**, a loop in `lab.py` running on
+your machine with your Docker CLI, carries it out with exactly the same code as `lab dc-down`,
+`lab dc-up`, `lab partition` and `lab heal`. It accepts only those actions, for DC-A, DC-B or DC-C.
+
+```cmd
+lab drills start      REM opens the runner in its own window; close the window to stop it
+lab drills            REM or run it in the current terminal (Ctrl+C to stop)
+```
+
+While the runner isn't running the buttons are disabled and the panel says how to start it. The
+landing page is bound to `127.0.0.1:9090`, so only your own machine can press them.
 
 ---
 
@@ -335,6 +368,8 @@ postgres-patroni-multidc-lab\        ← wherever you cloned it
 | A node stays `stopped` after `lab dc-up` | It's waiting for an etcd member | Check `lab status`; it needs any healthy etcd member |
 | Landing page shows a DC as "Powered off" but it's running | You started it with `docker start` instead of `lab dc-up` | Run `lab dc-up <dc>` to update `state/lab-state.json` |
 | pgAdmin access violation | See [Connecting with pgAdmin](#connecting-with-pgadmin) | `gssencmode=disable` |
+| Data center buttons are greyed out | The drill runner isn't running | `lab drills start` from the repo folder |
+| A button says "Another failure simulation is still queued" | A request is waiting in `state\requests\` (runner was stopped) | Start the runner, or delete the file |
 
 ---
 

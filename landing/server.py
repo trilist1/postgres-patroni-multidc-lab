@@ -386,7 +386,51 @@ def collect_status():
                            "image": compose.get("landing", {}).get("image"),
                            "ports": compose.get("landing", {}).get("ports", [])}
     return {"checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "services": services,
-            "topology": TOPO, "lab": lab_state()}
+            "topology": TOPO, "lab": lab_state(), "drills": drill_runner()}
+
+
+# --------------------------------------------------------------------------
+# Data-center failure buttons
+# --------------------------------------------------------------------------
+# This container has no Docker access. A button queues a request file in
+# state/requests/; `lab drills` on the host carries it out and writes
+# state/requests/results/<id>.json.
+REQ_DIR = STATE_DIR / "requests"
+DRILL_ACTIONS = ("power-off", "power-off-graceful", "power-on", "partition", "heal")
+RUNNER_STALE_S = 6
+
+
+def drill_runner():
+    try:
+        r = json.loads((STATE_DIR / "drills-runner.json").read_text())
+    except (OSError, ValueError):
+        return {"online": False}
+    r["online"] = time.time() - float(r.get("updated", 0)) < RUNNER_STALE_S
+    return r
+
+
+def queue_drill(dc, action):
+    if dc not in DCS or action not in DRILL_ACTIONS:
+        return 400, {"ok": False, "message": "Unknown data center or action."}
+    if not drill_runner()["online"]:
+        return 503, {"ok": False, "message": "The drill runner isn't running. Start it from the repo folder: lab drills start"}
+    if list(REQ_DIR.glob("*.json")):
+        return 409, {"ok": False, "message": "Another failure simulation is still queued. Wait for it to finish."}
+    rid = f"{int(time.time())}-{os.urandom(4).hex()}"
+    tmp = REQ_DIR / f".{rid}.tmp"
+    tmp.write_text(json.dumps({"id": rid, "dc": dc, "action": action, "requested": time.time()}))
+    os.replace(tmp, REQ_DIR / f"{rid}.json")
+    print(f"[drill] queued {action} {dc} as {rid}", flush=True)
+    return 202, {"ok": True, "id": rid, "message": "Queued for the drill runner."}
+
+
+def drill_result(rid):
+    if not re.fullmatch(r"[0-9a-f-]{1,40}", rid or ""):
+        return None
+    try:
+        return json.loads((REQ_DIR / "results" / f"{rid}.json").read_text())
+    except (OSError, ValueError):
+        return None
 
 
 def postgres_view(pat, exp):
@@ -604,6 +648,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, json.dumps(cfg))
         if path == "/api/history":
             return self._send(200, json.dumps(leader_history()))
+        if path == "/api/drills":
+            rid = dict(p.split("=", 1) for p in query.split("&") if "=" in p).get("id")
+            return self._send(200, json.dumps({"runner": drill_runner(), "result": drill_result(rid) if rid else None}))
         self._send(404, json.dumps({"error": "Not found"}))
 
     def _same_origin(self):
@@ -615,6 +662,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.partition("?")[0]
+        d = re.fullmatch(r"/api/dc/([a-z])/([a-z-]+)", path)
+        if d:
+            if not self._same_origin():
+                return self._send(403, json.dumps({"ok": False, "message": "Failure simulations must come from this page."}))
+            code, result = queue_drill(*d.groups())
+            return self._send(code, json.dumps(result))
         m = re.fullmatch(r"/api/(switchover|failover)", path)
         if not m:
             return self._send(404, json.dumps({"error": "Not found"}))
@@ -629,7 +682,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, json.dumps(result))
 
     def log_message(self, fmt, *args):
-        if not self.path.startswith(("/api/status", "/api/history", "/healthz", "/metrics")):
+        if not self.path.startswith(("/api/status", "/api/history", "/api/drills", "/healthz", "/metrics")):
             super().log_message(fmt, *args)
 
 

@@ -382,7 +382,7 @@ services:
       dc-b: {}
       dc-c: {}
     ports:
-      - "9090:8080"
+      - "127.0.0.1:9090:8080"
     environment:
       - "HAPROXY_STATS_AUTH=admin:HaproxyStats2026"
     volumes:
@@ -392,6 +392,7 @@ services:
       - "./bgp:/srv/bgp:ro"
       - "./edge:/srv/edge:ro"
       - "./state:/srv/state:ro"
+      - "./state/requests:/srv/state/requests"
       - "./docker-compose.yml:/srv/docker-compose.yml:ro"
     command: ["python", "-u", "/app/server.py"]
     healthcheck:

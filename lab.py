@@ -21,6 +21,8 @@ Usage:  lab <command> [args]        (lab.cmd wraps this on Windows)
   partition <a|b|c>        cut a data center off the WAN (containers keep running)
   heal <a|b|c>             reconnect it to the WAN
   restore FILE             load a pg_dumpall file into the current primary
+  drills [start]           run the drill runner behind the landing page's DC failure buttons
+                           (start = open it in its own window on Windows)
   remove [--data]          remove containers and images (--data also deletes data folders)
 
 Everything is configured in SETTINGS / DCS below. Standard library only (Python 3.10+).
@@ -633,10 +635,14 @@ def compose_doc():
         "labels": labels("mgmt", "landing"),
         # Management station: reaches every DC directly, so it can show a partitioned DC.
         "networks": {"wan": {"ipv4_address": S["landing_wan_ip"]}, **every_dc},
-        "ports": [f"{S['landing_port']}:8080"],
+        # localhost only: the page can trigger switchovers and data-center failures
+        "ports": [f"127.0.0.1:{S['landing_port']}:8080"],
         "environment": [f"HAPROXY_STATS_AUTH={stats_auth}"],
+        # state/ is read-only except state/requests, where the DC failure buttons queue
+        # work for `lab drills` on the host.
         "volumes": ["./landing:/app:ro", "./config:/srv/config:ro", "./patroni-image:/srv/patroni-image:ro",
                     "./bgp:/srv/bgp:ro", "./edge:/srv/edge:ro", "./state:/srv/state:ro",
+                    "./state/requests:/srv/state/requests",
                     "./docker-compose.yml:/srv/docker-compose.yml:ro"],
         "command": ["python", "-u", "/app/server.py"],
         "healthcheck": {"test": ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz', timeout=3)"],
@@ -701,7 +707,7 @@ def cmd_generate(_args=None):
     log("Creating folders")
     for d in ["config/haproxy", "config/prometheus", "config/edge", "config/landing",
               "config/grafana/provisioning/datasources", "config/grafana/provisioning/dashboards",
-              "config/grafana/dashboards", "state/bgp", "prometheus-data", "grafana-data", "certs",
+              "config/grafana/dashboards", "state/bgp", "state/requests/results", "prometheus-data", "grafana-data", "certs",
               *[f"pgdata/{p}" for p in ALL_PATRONI], *[f"etcd-data/{e}" for e in ALL_ETCD]]:
         (BASE / d).mkdir(parents=True, exist_ok=True)
     if not (BASE / "certs" / "ca.crt").exists():
@@ -810,7 +816,8 @@ def cmd_setup(args):
  DC-B HAProxy      localhost:5100 write, :5101 read, http://localhost:7100 stats
  Grafana           http://localhost:{S['grafana_port']}  ({S['grafana_user']}/{S['grafana_password']})
  Prometheus        http://localhost:{S['prometheus_port']}
- Try a DR drill    lab dc-down a   (then: lab status, lab dc-up a)
+ DC failure drills lab drills start   (enables the buttons on the landing page)
+                   or from the CLI: lab dc-down a / lab dc-up a / lab partition b / lab heal b
 """)
 
 
@@ -935,8 +942,80 @@ def cmd_remove(args):
         log("Data deleted", "OK")
 
 
+# ============================================================================
+# Drill runner: carries out the landing page's data-center failure buttons
+# ============================================================================
+# The landing page can't control Docker (no container gets the Docker socket).
+# Its buttons drop a request file into state/requests/; this loop, running on the
+# host with your Docker CLI, picks it up and runs the same code as the CLI
+# commands, then writes the result next to it. It only knows these actions:
+DRILLS = {
+    "power-off": lambda dc: cmd_dc_down([dc]),
+    "power-off-graceful": lambda dc: cmd_dc_down([dc, "--graceful"]),
+    "power-on": lambda dc: cmd_dc_up([dc]),
+    "partition": lambda dc: cmd_partition([dc]),
+    "heal": lambda dc: cmd_heal([dc]),
+}
+REQ_DIR = BASE / "state" / "requests"
+RUNNER_FILE = BASE / "state" / "drills-runner.json"
+
+
+def _runner_beat(busy=None, last=None, started=None):
+    st = {"pid": os.getpid(), "started": started, "updated": time.time(), "busy": busy, "last": last}
+    tmp = RUNNER_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(st))
+    os.replace(tmp, RUNNER_FILE)
+
+
+def cmd_drills(args):
+    if args and args[0] == "start":
+        # Convenience on Windows: run the loop in its own, visible console window.
+        if os.name == "nt":
+            subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "drills"],
+                             cwd=BASE, creationflags=subprocess.CREATE_NEW_CONSOLE)
+            return log("Drill runner started in a new window. Close that window to stop it.", "OK")
+        return log("Run `python lab.py drills` in its own terminal.", "INFO")
+    REQ_DIR.mkdir(parents=True, exist_ok=True)
+    (REQ_DIR / "results").mkdir(exist_ok=True)
+    started = time.time()
+    print(f"""
+ Drill runner for the landing page (http://localhost:{S['landing_port']})
+ Waiting for data-center failure requests. Keep this window open; Ctrl+C to stop.
+""", flush=True)
+    last = None
+    try:
+        while True:
+            _runner_beat(last=last, started=started)
+            for f in sorted(REQ_DIR.glob("*.json")):
+                try:
+                    req = json.loads(f.read_text())
+                    f.unlink()                                # claim it
+                except (OSError, ValueError):
+                    continue
+                rid, dc, action = str(req.get("id", ""))[:40], req.get("dc"), req.get("action")
+                result = {"id": rid, "dc": dc, "action": action, "started": time.time()}
+                if dc not in DCS or action not in DRILLS or not rid.replace("-", "").isalnum():
+                    result.update(ok=False, message="Rejected: unknown data center or action")
+                else:
+                    print(f"\n[{time.strftime('%H:%M:%S')}] {action} {DCS[dc]['name']} (requested from the landing page)", flush=True)
+                    _runner_beat(busy=f"{action} {dc}", last=last, started=started)
+                    try:
+                        DRILLS[action](dc)
+                        result.update(ok=True, message=f"Done: {action.replace('-', ' ')} {DCS[dc]['name']}")
+                    except (SystemExit, Exception) as e:
+                        result.update(ok=False, message=f"Failed: {e}")
+                result["finished"] = time.time()
+                last = result
+                (REQ_DIR / "results" / f"{rid or 'invalid'}.json").write_text(json.dumps(result))
+                _runner_beat(last=last, started=started)
+            time.sleep(1)
+    except KeyboardInterrupt:
+        RUNNER_FILE.unlink(missing_ok=True)
+        print("\nDrill runner stopped.")
+
+
 COMMANDS = {
-    "setup": cmd_setup, "generate": cmd_generate, "build": cmd_build,
+    "setup": cmd_setup, "generate": cmd_generate, "build": cmd_build, "drills": cmd_drills,
     "up": lambda a: compose("up", "-d"), "start": lambda a: compose("up", "-d"),
     "stop": lambda a: compose("stop"), "down": lambda a: compose("down"),
     "status": cmd_status, "logs": lambda a: compose("logs", "-f", "--tail", "100", *a, check=False),
@@ -948,6 +1027,7 @@ COMMANDS = {
 
 def menu():
     items = [("setup", "Full setup (generate, build, start)"), ("status", "Status"), ("bgp", "BGP table"),
+             ("drills start", "Start the drill runner (landing page DC buttons)"),
              ("dc-down a", "Power off DC-A"), ("dc-up a", "Power on DC-A"),
              ("dc-down b", "Power off DC-B"), ("dc-up b", "Power on DC-B"),
              ("partition a", "Partition DC-A from the WAN"), ("heal a", "Heal DC-A"),

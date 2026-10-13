@@ -106,6 +106,20 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .vip-table td.best { color: var(--ok); font-weight: 500; }
 .vip-table td.backup { color: var(--ink-soft); }
 .vip-table td.gone { color: var(--down); }
+.dc-list { display: grid; gap: 10px; }
+.dc-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; align-items: center;
+          border: 1px solid var(--rule-faint); border-radius: 6px; padding: 10px 12px; }
+.dc-row .who b { font-weight: 600; }
+.dc-row .who small { display: block; color: var(--ink-soft); font-size: .8125rem; }
+.dc-row .acts { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.dc-row .confirm { grid-column: 1 / -1; margin-top: 2px; }
+.dc-chip { display: inline-flex; align-items: center; gap: 6px; font-size: .8125rem; font-weight: 500; margin-left: 8px; }
+.btn.warn { border-color: var(--warn); }
+.btn.danger-outline { border-color: var(--down); color: var(--down); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.runner { font-size: .875rem; color: var(--ink-soft); margin: 0 0 12px; }
+.runner.off { color: var(--warn); }
+.check { display: inline-flex; gap: 6px; align-items: center; font-size: .875rem; margin: 0 0 10px; }
 .drill code { font: 400 13px/1.5 "IBM Plex Mono", ui-monospace, monospace; background: var(--code-bg); padding: 1px 6px; border-radius: 3px; }
 .drill li { margin: 4px 0; }
 
@@ -237,14 +251,10 @@ pre.code {
     </div>
     <div class="panel drill">
       <h2>Data centers</h2>
-      <p class="lead" id="dc-lead"></p>
-      <div id="dc-list"></div>
-      <p class="method-note">Simulate a failure from the repo folder, then watch this page:</p>
-      <ul>
-        <li><code>lab dc-down a</code> power cut (<code>lab dc-up a</code> to restore)</li>
-        <li><code>lab partition b</code> cut DC-B off the WAN (<code>lab heal b</code>)</li>
-        <li><code>lab dc-down c</code> lose the witness: nothing should change</li>
-      </ul>
+      <p class="lead" id="dc-lead">Simulate a data-center failure and watch the cluster react.</p>
+      <div id="dc-runner" class="runner" aria-live="polite"></div>
+      <div id="dc-list" class="dc-list"></div>
+      <p class="outcome" id="dc-outcome" aria-live="polite"></p>
     </div>
   </section>
 
@@ -338,6 +348,13 @@ const L = {
   prometheus: { x: 1070, y: 300, w: 196, h: 64 },
 };
 const PG_ORDER = ["patroni1", "patroni2", "patroni3"];
+/* During a failover the old primary can still report "leader" while it demotes.
+   The real primary is the one that is running on the newest timeline. */
+function primaryOf(S) {
+  const c = PG_ORDER.filter(n => S[n] && S[n].role === "leader" && S[n].status !== "down");
+  c.sort((a, b) => (S[b].timeline || 0) - (S[a].timeline || 0));
+  return c[0];
+}
 L.pg = PG_ORDER.map(n => ({ x: L.pgx[n], y: 378, w: 212, h: 136 }));
 L.tap = PG_ORDER.map(n => ({ x: L.pgx[n], y: 465, w: 168, h: 24 }));
 const yTop = b => b.y - b.h / 2, yBot = b => b.y + b.h / 2;
@@ -385,7 +402,8 @@ function drawPgNode(svg, n, i, S, isLeader) {   /* svg = the node's data center 
   text(g, cx + 24, cy + 21, `PostgreSQL ${pg.version || ""}`.trim(), "title", "start");
   let l1;
   if (pg.status === "down") l1 = pg.state === "unreachable" ? "Not reachable" : `Stopped (${pg.state})`;
-  else if (s.role === "leader") l1 = `Primary, read-write, timeline ${s.timeline}`;
+  else if (isLeader) l1 = `Primary, read-write, timeline ${s.timeline}`;
+  else if (s.role === "leader") l1 = "Stepping down (old primary)";
   else l1 = `Replica, ${s.state || pg.state}, ${fmtLag(s.lag)}`;
   text(g, cx + 12, cy + 40, l1, "sub", "start");
   if (pg.connections !== undefined && pg.max_connections && pg.databases) {   /* partial stats while restarting */
@@ -439,7 +457,7 @@ function render(data) {
   const focused = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.svc : null;
   svg.replaceChildren();
 
-  const leader = PG_ORDER.find(n => S[n] && S[n].role === "leader");
+  const leader = primaryOf(S);
   const edge = S.edge || {};
   const isDown = k => (lab.down || []).includes(k), isCut = k => (lab.partitioned || []).includes(k);
   const dcOf = n => (S[n] && S[n].dc) || null;
@@ -612,16 +630,127 @@ function renderVip(S, T, edge, lab) {
   document.getElementById("vip-lead").textContent =
     `Each data center's BGP speaker announces the VIPs to the edge router while its HAProxy can serve them. ` +
     `The lowest MED wins. The DC holding the primary uses MED 50 for writes.`;
+}
+
+/* ---- data-center failure buttons ----
+   The page has no Docker access: a button queues the request and `lab drills`
+   (running on the host) carries it out with the same code as the CLI. */
+const DC_ACTIONS = {
+  "power-off": { label: "Cut power", cls: "danger-outline", verb: "Cut power to" },
+  "partition": { label: "Cut from WAN", cls: "warn", verb: "Cut off" },
+  "power-on":  { label: "Power on", cls: "", verb: "Power on" },
+  "heal":      { label: "Reconnect", cls: "", verb: "Reconnect" },
+};
+let dcConfirm = null, dcBusy = null, dcKey = "";
+
+function dcImpact(k, action, S, T, lab) {
+  const d = T.dcs[k], primary = primaryOf(S);
+  const here = primary && d.patroni.includes(primary);
+  const others = Object.keys(T.dcs).filter(x => x !== k && ((lab.down || []).includes(x) || (lab.partitioned || []).includes(x)));
+  const warn = others.length && (action === "power-off" || action === "partition")
+    ? ` Careful: ${others.map(x => T.dcs[x].name).join(", ")} is already out. Losing a second data center leaves etcd without a quorum, so no node can be primary until one comes back.`
+    : "";
+  const nodes = [...(d.haproxy ? [d.haproxy] : []), ...d.patroni, ...d.etcd].join(", ");
+  if (action === "power-off") {
+    if (!d.patroni.length) return `Stops ${nodes} instantly. etcd keeps 2 of 3 members, so nothing should change.` + warn;
+    return (here
+      ? `Stops ${nodes} instantly. The primary ${primary} is here, so writes stop until another data center is promoted: about 30 s, once the leader lock expires.`
+      : `Stops ${nodes} instantly. The primary ${primary || "(none)"} keeps running elsewhere; this DC's replicas and its BGP routes disappear.`) + warn;
+  }
+  if (action === "partition") {
+    return (here
+      ? `${d.name} keeps running but can't reach the other data centers. The primary ${primary} loses etcd, demotes itself (no split-brain), and another DC takes over in about 30 s.`
+      : `${d.name} keeps running but can't reach the other data centers. Its nodes stop replicating and its BGP routes are withdrawn; the primary isn't affected.`) + warn;
+  }
+  if (action === "power-on") return `Starts ${nodes}. PostgreSQL nodes rejoin as replicas (pg_rewind if their timeline diverged).`;
+  return `Reconnects ${d.name} to the WAN. Its nodes catch up and rejoin as replicas.`;
+}
+
+function renderDcs(data) {
+  if (!data) return;
+  const S = data.services, T = data.topology, lab = data.lab || {}, runner = data.drills || {};
+  const key = JSON.stringify([lab.down, lab.partitioned, runner.online, runner.busy, dcConfirm, dcBusy,
+                              PG_ORDER.map(n => S[n] && S[n].role)]);
+  if (key === dcKey) return;
+  dcKey = key;
+  const rn = document.getElementById("dc-runner");
+  rn.className = "runner" + (runner.online ? "" : " off");
+  rn.innerHTML = runner.online
+    ? (runner.busy ? `Drill runner is working: ${runner.busy}…` : "Drill runner connected. Buttons are live.")
+    : `Buttons are off: the drill runner isn't running. In the repo folder run <code>lab drills start</code> (or <code>.\\lab drills start</code> in PowerShell).`;
   const list = document.getElementById("dc-list");
   list.replaceChildren();
   Object.entries(T.dcs).forEach(([k, d]) => {
-    const p = document.createElement("p");
-    p.className = "method-note";
-    const st = (lab.down || []).includes(k) ? "powered off" : (lab.partitioned || []).includes(k) ? "cut off from the WAN" : "running";
-    p.textContent = `${d.name}: ${st}. ${[...(d.haproxy ? [d.haproxy] : []), ...d.patroni, ...d.etcd].join(", ")}`;
-    list.appendChild(p);
+    const down = (lab.down || []).includes(k), cut = (lab.partitioned || []).includes(k);
+    const row = document.createElement("div");
+    row.className = "dc-row";
+    const state = down ? ["down", "Powered off"] : cut ? ["degraded", "Cut off from the WAN"] : ["up", "Running"];
+    row.innerHTML = `<div class="who"><b></b><span class="dc-chip ${state[0]}"><i class="dot ${state[0]}"></i>${state[1]}</span><small></small></div><div class="acts"></div>`;
+    row.querySelector("b").textContent = d.name;
+    row.querySelector("small").textContent = [...(d.haproxy ? [d.haproxy] : []), ...d.patroni, ...d.etcd].join(", ");
+    const acts = down ? ["power-on"] : cut ? ["heal", "power-off"] : ["power-off", "partition"];
+    acts.forEach(a => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = `btn ${DC_ACTIONS[a].cls}`; b.textContent = DC_ACTIONS[a].label;
+      b.disabled = !runner.online || !!dcBusy || !!runner.busy;
+      b.addEventListener("click", () => { dcConfirm = { dc: k, action: a }; renderDcs(last); });
+      row.querySelector(".acts").appendChild(b);
+    });
+    if (dcConfirm && dcConfirm.dc === k) {
+      const c = document.createElement("div");
+      c.className = "confirm";
+      const a = dcConfirm.action;
+      c.innerHTML = `<p></p>${a === "power-off" && d.patroni.length ? '<label class="check"><input type="checkbox" id="dc-graceful"> Graceful shutdown instead (Patroni hands over its leader lock first, so failover is quicker)</label>' : ""}
+        <div class="row"><button type="button" class="btn btn-primary${a === "power-off" || a === "partition" ? " danger" : ""}" id="dc-go"></button><button type="button" class="btn" id="dc-cancel">Cancel</button></div>`;
+      c.querySelector("p").textContent = dcImpact(k, a, S, T, lab);
+      c.querySelector("#dc-go").textContent = `Confirm: ${DC_ACTIONS[a].verb.toLowerCase()} ${d.name}`;
+      c.querySelector("#dc-go").addEventListener("click", () => {
+        const graceful = a === "power-off" && c.querySelector("#dc-graceful") && c.querySelector("#dc-graceful").checked;
+        runDrill(k, graceful ? "power-off-graceful" : a, d.name);
+      });
+      c.querySelector("#dc-cancel").addEventListener("click", () => { dcConfirm = null; renderDcs(last); });
+      row.appendChild(c);
+    }
+    list.appendChild(row);
   });
-  document.getElementById("dc-lead").textContent = "Losing any one data center keeps etcd at 2 of 3 members, so failover is automatic.";
+}
+
+async function runDrill(dc, action, name) {
+  dcConfirm = null; dcBusy = `${action} ${dc}`;
+  const hadPrimary = last && last.topology.dcs[dc].patroni.includes(primaryOf(last.services));
+  const out = document.getElementById("dc-outcome");
+  out.className = "outcome busy";
+  out.textContent = `Asking the drill runner to ${action.replace(/-/g, " ")} ${name}…`;
+  renderDcs(last);
+  let res;
+  try {
+    const r = await fetch(`/api/dc/${dc}/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    res = await r.json();
+  } catch (e) { res = { ok: false, message: `The landing page backend didn't answer: ${e.message}` }; }
+  if (!res.ok) {
+    dcBusy = null; out.className = "outcome fail"; out.textContent = res.message; renderDcs(last); return;
+  }
+  for (let i = 0; i < 60; i++) {           /* the runner usually finishes in 1-5 s */
+    await new Promise(r => setTimeout(r, 1000));
+    try {
+      const d = await (await fetch(`/api/drills?id=${encodeURIComponent(res.id)}`, { cache: "no-store" })).json();
+      if (d.result) {
+        dcBusy = null;
+        out.className = "outcome " + (d.result.ok ? "ok" : "fail");
+        const hint = !d.result.ok ? "" : !(action.startsWith("power-off") || action === "partition")
+          ? " Its nodes are rejoining; give them about 30 s."
+          : hadPrimary ? " The primary was there: watch the diagram, a new primary takes over in about 30 s."
+          : last.topology.dcs[dc].patroni.length ? " The primary wasn't there, so writes carry on. Watch its replicas and BGP routes drop out."
+          : " etcd keeps 2 of 3 members, so nothing else should change.";
+        out.textContent = d.result.message + "." + hint;
+        refresh();
+        return;
+      }
+    } catch { /* keep waiting */ }
+  }
+  dcBusy = null; out.className = "outcome fail";
+  out.textContent = "The drill runner didn't report back within 60 s. Check its window.";
+  renderDcs(last);
 }
 
 function renderTable(S, T) {
@@ -656,6 +785,7 @@ async function refresh() {
     const r = await fetch("/api/status", { cache: "no-store" });
     last = await r.json(); lastAt = Date.now();
     render(last);
+    renderDcs(last);
     if (!confirming) renderLeadership(last);   /* keep an open confirmation stable */
   } catch (e) {
     document.getElementById("verdict").innerHTML = `<span class="error">This page can't reach its own backend. Check that the landing container is running: docker compose -p patroni-ha ps landing</span>`;
@@ -686,7 +816,7 @@ let leadKey = "";
 function renderLeadership(data) {
   if (!data || busy) return;
   const S = data.services, pg = ["patroni1", "patroni2", "patroni3"];
-  const leader = pg.find(n => S[n] && S[n].role === "leader");
+  const leader = primaryOf(S);
   const tl = leader && S[leader].timeline;
   document.getElementById("lead-current").textContent = leader
     ? `PostgreSQL in ${leader} is the primary (Patroni leader) on timeline ${tl}. Writes on port 5000 go there.`
