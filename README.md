@@ -114,6 +114,17 @@ All tags are pinned (no `:latest`) so a rebuild gives the same stack. Versions l
 - Minimum 8GB RAM allocated to Docker (Settings → Resources)
 - ~5GB free disk space
 
+### Get the code
+
+```cmd
+git clone https://github.com/trilist1/postgres-patroni-ha-lab.git
+cd postgres-patroni-ha-lab
+```
+
+Clone it anywhere. The script uses the folder it lives in as `BASE_DIR`, and
+`docker-compose.yml` only contains relative paths (`./pgdata/...`), so nothing is tied to a
+particular drive or user folder.
+
 ### Setup (One Command)
 
 ```cmd
@@ -130,7 +141,8 @@ This will:
 7. Start all 13 containers via `docker compose up -d`
 8. Create `pg_stat_statements`, the `appuser` role and the `appdb` database on the leader
 
-Then open **http://localhost:9090** for the landing page.
+Then open **http://localhost:9090** for the landing page, and
+[add the servers to pgAdmin](#connecting-with-pgadmin) in one step.
 
 ### Verify
 
@@ -419,7 +431,7 @@ Edit `landing\index.html` or `server.py`, then `docker restart landing`.
 ## File Structure
 
 ```
-D:\Software\Containers\PostgresPatroni\Claude\
+postgres-patroni-ha-lab\           ← wherever you cloned it (BASE_DIR)
 ├── patroni-ha-cluster.cmd          ← This management script
 ├── README.md                       ← This documentation
 ├── docker-compose.yml              ← Generated Docker Compose file
@@ -482,16 +494,63 @@ D:\Software\Containers\PostgresPatroni\Claude\
 
 ## Connecting with pgAdmin
 
-Import the ready-made server list: in pgAdmin choose **Tools > Import/Export Servers**, pick
-**Import**, select `pgadmin-servers.json` from this folder, and confirm. That adds the write
-endpoint (:5000), the read endpoint (:5001) and the three nodes directly (:5433-5435), all as
-user `postgres`. pgAdmin asks for the password (`SuperSecret2026`) on first connect.
+`pgadmin-servers.json` (in the repo root) holds all five endpoints, ready to import:
 
-Every entry sets `gssencmode=disable`. Without it, pgAdmin 9.x on Windows can crash with
-`exception: access violation writing 0x0000000000000000` while it probes for Kerberos
-encryption. The crash is client-side and the cluster doesn't use Kerberos, so disabling GSS
-negotiation has no downside. For a server you add by hand: **Properties > Parameters >
-add "GSS encryption mode" = disable**.
+| Name in pgAdmin | Port | What you reach | Group |
+|-----------------|------|----------------|-------|
+| HA write (primary) :5000 | 5000 | The current primary, through HAProxy. Follows switchovers and failovers | pg-ha-cluster |
+| HA read (replicas) :5001 | 5001 | A replica, through HAProxy (round-robin) | pg-ha-cluster |
+| patroni1 direct :5433 | 5433 | That node's PostgreSQL, bypassing HAProxy | pg-ha-cluster nodes |
+| patroni2 direct :5434 | 5434 | That node's PostgreSQL, bypassing HAProxy | pg-ha-cluster nodes |
+| patroni3 direct :5435 | 5435 | That node's PostgreSQL, bypassing HAProxy | pg-ha-cluster nodes |
+
+All entries use user `postgres` and the setting `gssencmode=disable` (see the note below).
+
+### Option 1: import from the pgAdmin menu
+
+Tested with pgAdmin 9.18 on Windows.
+
+1. Start pgAdmin.
+2. Open **Tools > Import/Export Servers...**
+3. Choose **Import**, then the folder icon next to **Filename**, and pick
+   `pgadmin-servers.json` from the repo folder. Select **Next**.
+4. Tick the servers to import (all five are selected by default) and select **Next**, then **Finish**.
+5. The two groups **pg-ha-cluster** and **pg-ha-cluster nodes** appear in the Object Explorer.
+   Expand one and select a server.
+6. Enter the password `SuperSecret2026`, tick **Save Password**, and select **OK**.
+
+Use **HA write (primary) :5000** for day-to-day work. It always reaches whichever node is
+primary right now, so it keeps working after a switchover from the landing page.
+
+### Option 2: import from the command line
+
+Handy when you set up a new machine. Close pgAdmin first, then in `cmd` from the repo folder:
+
+```cmd
+set "PGA=%LOCALAPPDATA%\Programs\pgAdmin 4"
+set "PATH=%PGA%\runtime;%PATH%"
+"%PGA%\python\python.exe" "%PGA%\web\setup.py" load-servers pgadmin-servers.json --user pgadmin4@pgadmin.org
+```
+
+It should end with `... and 5 Server(s).` (2 groups are added the first time). Notes:
+
+- `pgadmin4@pgadmin.org` is the built-in user of pgAdmin's desktop mode. If you run pgAdmin
+  in server mode, use your pgAdmin login email instead.
+- The `PATH` line matters: without pgAdmin's `runtime` folder the command fails with
+  `libpq library not found`.
+- If pgAdmin was installed for all users, use `C:\Program Files\pgAdmin 4` for `PGA`.
+- **Running it twice creates duplicates.** Don't "fix" that with `--replace`: it deletes
+  **every** server and group in your pgAdmin, not just these five. Delete the duplicate
+  entries by hand instead (right-click > **Delete**).
+
+### If pgAdmin crashes with "access violation writing 0x0000000000000000"
+
+pgAdmin 9.x on Windows can crash inside its PostgreSQL client library while it checks for
+Kerberos (GSSAPI) encryption, before it ever reaches the server. The imported entries already
+avoid this with `gssencmode=disable`. The cluster doesn't use Kerberos, so it costs nothing.
+
+For a server you add by hand: open its **Properties > Parameters**, add **GSS encryption mode**,
+set it to **disable**, and save.
 
 ---
 
@@ -536,8 +595,10 @@ docker compose -p patroni-ha down --remove-orphans
 | HAProxy stats | `admin` | `HaproxyStats2026` | http://localhost:7000 |
 | Grafana | `admin` | `GrafanaAdmin2026` | http://localhost:3000 |
 
-**Change these** in the `CONFIGURATION` section of `patroni-ha-cluster.cmd` before
-running setup in any shared or non-isolated environment.
+These are **deliberately public lab defaults**, so anyone can clone and run the lab without
+setup. All services bind to your machine's ports; nothing here is meant for a real network.
+**Change them** in the `CONFIGURATION` section of `patroni-ha-cluster.cmd` before running setup
+anywhere shared, then re-run `generate`.
 
 ---
 

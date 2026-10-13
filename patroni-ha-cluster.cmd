@@ -77,13 +77,16 @@ REM  image versions are defined here - nothing is hardcoded elsewhere.
 REM ============================================================================
 
 REM --- BASE_DIR: Root directory for ALL generated files.                    ---
-REM --- Subdirectories created automatically: config/, certs/, pgdata/,     ---
-REM --- etcd-data/, patroni-image/, prometheus-data/, grafana-data/         ---
-set "BASE_DIR=D:\Software\Containers\PostgresPatroni\Claude"
+REM --- Defaults to the folder this script lives in, so the repo works from ---
+REM --- any location. Subdirectories created automatically: config/, certs/,---
+REM --- pgdata/, etcd-data/, patroni-image/, prometheus-data/, grafana-data/ ---
+set "BASE_DIR=%~dp0"
+if "%BASE_DIR:~-1%"=="\" set "BASE_DIR=%BASE_DIR:~0,-1%"
 
 REM --- PG_DATA_DIR: Where PostgreSQL data files are persisted on the host. ---
 REM --- Each Patroni node gets its own subdirectory (patroni1/2/3).         ---
-REM --- This survives container restarts and rebuilds.                      ---
+REM --- This survives container restarts and rebuilds. Keep it at           ---
+REM --- BASE_DIR\pgdata: docker-compose.yml mounts ./pgdata relative paths.  ---
 set "PG_DATA_DIR=%BASE_DIR%\pgdata"
 
 REM --- COMPOSE_PROJECT: The name shown in Docker Desktop's container list. ---
@@ -800,6 +803,9 @@ REM  - HAProxy depends on Patroni (won't start until PG is initialising)
 REM  - 3 pg_exporters connect DIRECTLY to each PG node (not through HAProxy)
 REM    so we get metrics from both primary and replicas
 REM  - All services share a single Docker network for inter-container DNS
+REM  - Host paths are RELATIVE (./pgdata/...). Compose resolves them against
+REM    the compose file's folder, so the generated file contains no machine-
+REM    specific paths and the whole folder can be moved or cloned anywhere.
 REM ============================================================================
 :gen_docker_compose
 echo [STEP] Generating docker-compose.yml...
@@ -816,7 +822,7 @@ set "IC=%ETCD1_NAME%=http://%ETCD1_NAME%:2380,%ETCD2_NAME%=http://%ETCD2_NAME%:2
 >>"%CF%" echo     ports:
 >>"%CF%" echo       - "%ETCD1_CLIENT_PORT%:2379"
 >>"%CF%" echo     volumes:
->>"%CF%" echo       - %ETCD_DATA_DIR%\etcd1:/etcd-data
+>>"%CF%" echo       - ./etcd-data/etcd1:/etcd-data
 >>"%CF%" echo     command: ["/usr/local/bin/etcd", "--name=%ETCD1_NAME%", "--data-dir=/etcd-data", "--listen-client-urls=http://0.0.0.0:2379", "--advertise-client-urls=http://%ETCD1_NAME%:2379", "--listen-peer-urls=http://0.0.0.0:2380", "--initial-advertise-peer-urls=http://%ETCD1_NAME%:2380", "--initial-cluster=%IC%", "--initial-cluster-token=%ETCD_CLUSTER_TOKEN%", "--initial-cluster-state=new", "--logger=zap", "--log-level=info"]
 >>"%CF%" echo     healthcheck:
 >>"%CF%" echo       test: ["CMD", "/usr/local/bin/etcdctl", "endpoint", "health", "--endpoints=http://localhost:2379"]
@@ -831,7 +837,7 @@ set "IC=%ETCD1_NAME%=http://%ETCD1_NAME%:2380,%ETCD2_NAME%=http://%ETCD2_NAME%:2
 >>"%CF%" echo     ports:
 >>"%CF%" echo       - "%ETCD2_CLIENT_PORT%:2379"
 >>"%CF%" echo     volumes:
->>"%CF%" echo       - %ETCD_DATA_DIR%\etcd2:/etcd-data
+>>"%CF%" echo       - ./etcd-data/etcd2:/etcd-data
 >>"%CF%" echo     command: ["/usr/local/bin/etcd", "--name=%ETCD2_NAME%", "--data-dir=/etcd-data", "--listen-client-urls=http://0.0.0.0:2379", "--advertise-client-urls=http://%ETCD2_NAME%:2379", "--listen-peer-urls=http://0.0.0.0:2380", "--initial-advertise-peer-urls=http://%ETCD2_NAME%:2380", "--initial-cluster=%IC%", "--initial-cluster-token=%ETCD_CLUSTER_TOKEN%", "--initial-cluster-state=new", "--logger=zap", "--log-level=info"]
 >>"%CF%" echo     healthcheck:
 >>"%CF%" echo       test: ["CMD", "/usr/local/bin/etcdctl", "endpoint", "health", "--endpoints=http://localhost:2379"]
@@ -846,7 +852,7 @@ set "IC=%ETCD1_NAME%=http://%ETCD1_NAME%:2380,%ETCD2_NAME%=http://%ETCD2_NAME%:2
 >>"%CF%" echo     ports:
 >>"%CF%" echo       - "%ETCD3_CLIENT_PORT%:2379"
 >>"%CF%" echo     volumes:
->>"%CF%" echo       - %ETCD_DATA_DIR%\etcd3:/etcd-data
+>>"%CF%" echo       - ./etcd-data/etcd3:/etcd-data
 >>"%CF%" echo     command: ["/usr/local/bin/etcd", "--name=%ETCD3_NAME%", "--data-dir=/etcd-data", "--listen-client-urls=http://0.0.0.0:2379", "--advertise-client-urls=http://%ETCD3_NAME%:2379", "--listen-peer-urls=http://0.0.0.0:2380", "--initial-advertise-peer-urls=http://%ETCD3_NAME%:2380", "--initial-cluster=%IC%", "--initial-cluster-token=%ETCD_CLUSTER_TOKEN%", "--initial-cluster-state=new", "--logger=zap", "--log-level=info"]
 >>"%CF%" echo     healthcheck:
 >>"%CF%" echo       test: ["CMD", "/usr/local/bin/etcdctl", "endpoint", "health", "--endpoints=http://localhost:2379"]
@@ -864,9 +870,9 @@ set "IC=%ETCD1_NAME%=http://%ETCD1_NAME%:2380,%ETCD2_NAME%=http://%ETCD2_NAME%:2
 >>"%CF%" echo       - "%PATRONI1_PG_PORT%:5432"
 >>"%CF%" echo       - "%PATRONI1_API_PORT%:8008"
 >>"%CF%" echo     volumes:
->>"%CF%" echo       - %PG_DATA_DIR%\patroni1:/var/lib/postgresql/data
->>"%CF%" echo       - %CONFIG_DIR%\patroni1.yml:/etc/patroni/patroni.yml:ro
->>"%CF%" echo       - %CERTS_DIR%:/etc/patroni/certs:ro
+>>"%CF%" echo       - ./pgdata/patroni1:/var/lib/postgresql/data
+>>"%CF%" echo       - ./config/patroni1.yml:/etc/patroni/patroni.yml:ro
+>>"%CF%" echo       - ./certs:/etc/patroni/certs:ro
 >>"%CF%" echo     environment:
 >>"%CF%" echo       - PATRONI_NAME=%PATRONI1_NAME%
 >>"%CF%" echo       - ETCD_HOSTS=etcd1:2379,etcd2:2379,etcd3:2379
@@ -884,9 +890,9 @@ set "IC=%ETCD1_NAME%=http://%ETCD1_NAME%:2380,%ETCD2_NAME%=http://%ETCD2_NAME%:2
 >>"%CF%" echo       - "%PATRONI2_PG_PORT%:5432"
 >>"%CF%" echo       - "%PATRONI2_API_PORT%:8008"
 >>"%CF%" echo     volumes:
->>"%CF%" echo       - %PG_DATA_DIR%\patroni2:/var/lib/postgresql/data
->>"%CF%" echo       - %CONFIG_DIR%\patroni2.yml:/etc/patroni/patroni.yml:ro
->>"%CF%" echo       - %CERTS_DIR%:/etc/patroni/certs:ro
+>>"%CF%" echo       - ./pgdata/patroni2:/var/lib/postgresql/data
+>>"%CF%" echo       - ./config/patroni2.yml:/etc/patroni/patroni.yml:ro
+>>"%CF%" echo       - ./certs:/etc/patroni/certs:ro
 >>"%CF%" echo     environment:
 >>"%CF%" echo       - PATRONI_NAME=%PATRONI2_NAME%
 >>"%CF%" echo       - ETCD_HOSTS=etcd1:2379,etcd2:2379,etcd3:2379
@@ -904,9 +910,9 @@ set "IC=%ETCD1_NAME%=http://%ETCD1_NAME%:2380,%ETCD2_NAME%=http://%ETCD2_NAME%:2
 >>"%CF%" echo       - "%PATRONI3_PG_PORT%:5432"
 >>"%CF%" echo       - "%PATRONI3_API_PORT%:8008"
 >>"%CF%" echo     volumes:
->>"%CF%" echo       - %PG_DATA_DIR%\patroni3:/var/lib/postgresql/data
->>"%CF%" echo       - %CONFIG_DIR%\patroni3.yml:/etc/patroni/patroni.yml:ro
->>"%CF%" echo       - %CERTS_DIR%:/etc/patroni/certs:ro
+>>"%CF%" echo       - ./pgdata/patroni3:/var/lib/postgresql/data
+>>"%CF%" echo       - ./config/patroni3.yml:/etc/patroni/patroni.yml:ro
+>>"%CF%" echo       - ./certs:/etc/patroni/certs:ro
 >>"%CF%" echo     environment:
 >>"%CF%" echo       - PATRONI_NAME=%PATRONI3_NAME%
 >>"%CF%" echo       - ETCD_HOSTS=etcd1:2379,etcd2:2379,etcd3:2379
@@ -925,7 +931,7 @@ set "IC=%ETCD1_NAME%=http://%ETCD1_NAME%:2380,%ETCD2_NAME%=http://%ETCD2_NAME%:2
 >>"%CF%" echo       - "%HAPROXY_READ_PORT%:5001"
 >>"%CF%" echo       - "%HAPROXY_STATS_PORT%:7000"
 >>"%CF%" echo     volumes:
->>"%CF%" echo       - %HAPROXY_CFG_DIR%\haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+>>"%CF%" echo       - ./config/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
 >>"%CF%" echo     depends_on:
 >>"%CF%" echo       - %PATRONI1_NAME%
 >>"%CF%" echo       - %PATRONI2_NAME%
@@ -979,8 +985,8 @@ set "IC=%ETCD1_NAME%=http://%ETCD1_NAME%:2380,%ETCD2_NAME%=http://%ETCD2_NAME%:2
 >>"%CF%" echo     ports:
 >>"%CF%" echo       - "%PROMETHEUS_PORT%:9090"
 >>"%CF%" echo     volumes:
->>"%CF%" echo       - %PROMETHEUS_CFG_DIR%\prometheus.yml:/etc/prometheus/prometheus.yml:ro
->>"%CF%" echo       - %BASE_DIR%\prometheus-data:/prometheus
+>>"%CF%" echo       - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+>>"%CF%" echo       - ./prometheus-data:/prometheus
 >>"%CF%" echo     depends_on:
 >>"%CF%" echo       - %PG_EXPORTER1_NAME%
 >>"%CF%" echo.
@@ -995,9 +1001,9 @@ set "IC=%ETCD1_NAME%=http://%ETCD1_NAME%:2380,%ETCD2_NAME%=http://%ETCD2_NAME%:2
 >>"%CF%" echo       - GF_SECURITY_ADMIN_PASSWORD=%GRAFANA_ADMIN_PASSWORD%
 >>"%CF%" echo       - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/pg-ha-cluster.json
 >>"%CF%" echo     volumes:
->>"%CF%" echo       - %GRAFANA_PROV_DIR%:/etc/grafana/provisioning:ro
->>"%CF%" echo       - %GRAFANA_DASH_DIR%:/var/lib/grafana/dashboards:ro
->>"%CF%" echo       - %BASE_DIR%\grafana-data:/var/lib/grafana
+>>"%CF%" echo       - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+>>"%CF%" echo       - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+>>"%CF%" echo       - ./grafana-data:/var/lib/grafana
 >>"%CF%" echo     depends_on:
 >>"%CF%" echo       - %PROMETHEUS_NAME%
 >>"%CF%" echo.
@@ -1013,10 +1019,10 @@ set "IC=%ETCD1_NAME%=http://%ETCD1_NAME%:2380,%ETCD2_NAME%=http://%ETCD2_NAME%:2
 >>"%CF%" echo     environment:
 >>"%CF%" echo       - HAPROXY_STATS_AUTH=%HAPROXY_STATS_USER%:%HAPROXY_STATS_PASSWORD%
 >>"%CF%" echo     volumes:
->>"%CF%" echo       - %LANDING_DIR%:/app:ro
->>"%CF%" echo       - %CONFIG_DIR%:/srv/config:ro
->>"%CF%" echo       - %PATRONI_BUILD_DIR%:/srv/patroni-image:ro
->>"%CF%" echo       - %COMPOSE_FILE%:/srv/docker-compose.yml:ro
+>>"%CF%" echo       - ./landing:/app:ro
+>>"%CF%" echo       - ./config:/srv/config:ro
+>>"%CF%" echo       - ./patroni-image:/srv/patroni-image:ro
+>>"%CF%" echo       - ./docker-compose.yml:/srv/docker-compose.yml:ro
 >>"%CF%" echo     command: ["python", "-u", "/app/server.py"]
 >>"%CF%" echo     healthcheck:
 >>"%CF%" echo       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz', timeout=3)"]

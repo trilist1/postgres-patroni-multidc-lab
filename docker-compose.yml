@@ -8,7 +8,7 @@ services:
     ports:
       - "2379:2379"
     volumes:
-      - D:\Software\Containers\PostgresPatroni\Claude\etcd-data\etcd1:/etcd-data
+      - ./etcd-data/etcd1:/etcd-data
     command: ["/usr/local/bin/etcd", "--name=etcd1", "--data-dir=/etcd-data", "--listen-client-urls=http://0.0.0.0:2379", "--advertise-client-urls=http://etcd1:2379", "--listen-peer-urls=http://0.0.0.0:2380", "--initial-advertise-peer-urls=http://etcd1:2380", "--initial-cluster=etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380", "--initial-cluster-token=patroni-etcd-token", "--initial-cluster-state=new", "--logger=zap", "--log-level=info"]
     healthcheck:
       test: ["CMD", "/usr/local/bin/etcdctl", "endpoint", "health", "--endpoints=http://localhost:2379"]
@@ -23,7 +23,7 @@ services:
     ports:
       - "2381:2379"
     volumes:
-      - D:\Software\Containers\PostgresPatroni\Claude\etcd-data\etcd2:/etcd-data
+      - ./etcd-data/etcd2:/etcd-data
     command: ["/usr/local/bin/etcd", "--name=etcd2", "--data-dir=/etcd-data", "--listen-client-urls=http://0.0.0.0:2379", "--advertise-client-urls=http://etcd2:2379", "--listen-peer-urls=http://0.0.0.0:2380", "--initial-advertise-peer-urls=http://etcd2:2380", "--initial-cluster=etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380", "--initial-cluster-token=patroni-etcd-token", "--initial-cluster-state=new", "--logger=zap", "--log-level=info"]
     healthcheck:
       test: ["CMD", "/usr/local/bin/etcdctl", "endpoint", "health", "--endpoints=http://localhost:2379"]
@@ -38,7 +38,7 @@ services:
     ports:
       - "2383:2379"
     volumes:
-      - D:\Software\Containers\PostgresPatroni\Claude\etcd-data\etcd3:/etcd-data
+      - ./etcd-data/etcd3:/etcd-data
     command: ["/usr/local/bin/etcd", "--name=etcd3", "--data-dir=/etcd-data", "--listen-client-urls=http://0.0.0.0:2379", "--advertise-client-urls=http://etcd3:2379", "--listen-peer-urls=http://0.0.0.0:2380", "--initial-advertise-peer-urls=http://etcd3:2380", "--initial-cluster=etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380", "--initial-cluster-token=patroni-etcd-token", "--initial-cluster-state=new", "--logger=zap", "--log-level=info"]
     healthcheck:
       test: ["CMD", "/usr/local/bin/etcdctl", "endpoint", "health", "--endpoints=http://localhost:2379"]
@@ -56,9 +56,9 @@ services:
       - "5433:5432"
       - "8008:8008"
     volumes:
-      - D:\Software\Containers\PostgresPatroni\Claude\pgdata\patroni1:/var/lib/postgresql/data
-      - D:\Software\Containers\PostgresPatroni\Claude\config\patroni1.yml:/etc/patroni/patroni.yml:ro
-      - D:\Software\Containers\PostgresPatroni\Claude\certs:/etc/patroni/certs:ro
+      - ./pgdata/patroni1:/var/lib/postgresql/data
+      - ./config/patroni1.yml:/etc/patroni/patroni.yml:ro
+      - ./certs:/etc/patroni/certs:ro
     environment:
       - PATRONI_NAME=patroni1
       - ETCD_HOSTS=etcd1:2379,etcd2:2379,etcd3:2379
@@ -76,9 +76,9 @@ services:
       - "5434:5432"
       - "8009:8008"
     volumes:
-      - D:\Software\Containers\PostgresPatroni\Claude\pgdata\patroni2:/var/lib/postgresql/data
-      - D:\Software\Containers\PostgresPatroni\Claude\config\patroni2.yml:/etc/patroni/patroni.yml:ro
-      - D:\Software\Containers\PostgresPatroni\Claude\certs:/etc/patroni/certs:ro
+      - ./pgdata/patroni2:/var/lib/postgresql/data
+      - ./config/patroni2.yml:/etc/patroni/patroni.yml:ro
+      - ./certs:/etc/patroni/certs:ro
     environment:
       - PATRONI_NAME=patroni2
       - ETCD_HOSTS=etcd1:2379,etcd2:2379,etcd3:2379
@@ -96,9 +96,9 @@ services:
       - "5435:5432"
       - "8010:8008"
     volumes:
-      - D:\Software\Containers\PostgresPatroni\Claude\pgdata\patroni3:/var/lib/postgresql/data
-      - D:\Software\Containers\PostgresPatroni\Claude\config\patroni3.yml:/etc/patroni/patroni.yml:ro
-      - D:\Software\Containers\PostgresPatroni\Claude\certs:/etc/patroni/certs:ro
+      - ./pgdata/patroni3:/var/lib/postgresql/data
+      - ./config/patroni3.yml:/etc/patroni/patroni.yml:ro
+      - ./certs:/etc/patroni/certs:ro
     environment:
       - PATRONI_NAME=patroni3
       - ETCD_HOSTS=etcd1:2379,etcd2:2379,etcd3:2379
@@ -117,7 +117,7 @@ services:
       - "5001:5001"
       - "7000:7000"
     volumes:
-      - D:\Software\Containers\PostgresPatroni\Claude\config\haproxy\haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./config/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     depends_on:
       - patroni1
       - patroni2
@@ -171,8 +171,8 @@ services:
     ports:
       - "9091:9090"
     volumes:
-      - D:\Software\Containers\PostgresPatroni\Claude\config\prometheus\prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - D:\Software\Containers\PostgresPatroni\Claude\prometheus-data:/prometheus
+      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus-data:/prometheus
     depends_on:
       - pg-exporter1
 
@@ -187,9 +187,9 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=GrafanaAdmin2026
       - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/pg-ha-cluster.json
     volumes:
-      - D:\Software\Containers\PostgresPatroni\Claude\config\grafana\provisioning:/etc/grafana/provisioning:ro
-      - D:\Software\Containers\PostgresPatroni\Claude\config\grafana\dashboards:/var/lib/grafana/dashboards:ro
-      - D:\Software\Containers\PostgresPatroni\Claude\grafana-data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./grafana-data:/var/lib/grafana
     depends_on:
       - prometheus
 
@@ -205,10 +205,10 @@ services:
     environment:
       - HAPROXY_STATS_AUTH=admin:HaproxyStats2026
     volumes:
-      - D:\Software\Containers\PostgresPatroni\Claude\landing:/app:ro
-      - D:\Software\Containers\PostgresPatroni\Claude\config:/srv/config:ro
-      - D:\Software\Containers\PostgresPatroni\Claude\patroni-image:/srv/patroni-image:ro
-      - D:\Software\Containers\PostgresPatroni\Claude\docker-compose.yml:/srv/docker-compose.yml:ro
+      - ./landing:/app:ro
+      - ./config:/srv/config:ro
+      - ./patroni-image:/srv/patroni-image:ro
+      - ./docker-compose.yml:/srv/docker-compose.yml:ro
     command: ["python", "-u", "/app/server.py"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz', timeout=3)"]
