@@ -160,7 +160,10 @@ def load_state():
 
 def save_state(st):
     st["updated"] = time.time()
-    write("state/lab-state.json", json.dumps(st, indent=2))
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    # read constantly by the landing page: replace atomically, retrying past Windows file locks
+    if not _atomic_write(STATE_FILE, json.dumps(st, indent=2)):
+        log(f"couldn't update {STATE_FILE.name} (file in use); the landing page may lag a moment", "WARN")
 
 
 # ============================================================================
@@ -962,11 +965,25 @@ REQ_DIR = BASE / "state" / "requests"
 RUNNER_FILE = BASE / "state" / "drills-runner.json"
 
 
+def _atomic_write(path, text, tries=10):
+    """Write via a temp file + rename. On Windows the rename fails with 'Access is
+    denied' while another process (the landing page, through the bind mount) has the
+    target open for a moment, so retry briefly. Returns False instead of raising."""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    for i in range(tries):
+        try:
+            tmp.write_text(text)
+            os.replace(tmp, path)
+            return True
+        except OSError:
+            time.sleep(0.05 * (i + 1))
+    tmp.unlink(missing_ok=True)
+    return False
+
+
 def _runner_beat(busy=None, last=None, started=None):
     st = {"pid": os.getpid(), "started": started, "updated": time.time(), "busy": busy, "last": last}
-    tmp = RUNNER_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(st))
-    os.replace(tmp, RUNNER_FILE)
+    _atomic_write(RUNNER_FILE, json.dumps(st))      # a missed beat is fine; the next one comes in 1 s
 
 
 STOP_FILE = BASE / "state" / "drills-runner.stop"
@@ -1057,34 +1074,46 @@ def cmd_drills(args):
                     return
             except (OSError, ValueError):
                 pass
-            _runner_beat(last=last, started=started)
-            for f in sorted(REQ_DIR.glob("*.json")):
-                try:
-                    req = json.loads(f.read_text())
-                    f.unlink()                                # claim it
-                except (OSError, ValueError):
-                    continue
-                rid, dc, action = str(req.get("id", ""))[:40], req.get("dc"), req.get("action")
-                result = {"id": rid, "dc": dc, "action": action, "started": time.time()}
-                if dc not in DCS or action not in DRILLS or not rid.replace("-", "").isalnum():
-                    result.update(ok=False, message="Rejected: unknown data center or action")
-                else:
-                    print(f"\n[{time.strftime('%H:%M:%S')}] {action} {DCS[dc]['name']} (requested from the landing page)", flush=True)
-                    _runner_beat(busy=f"{action} {dc}", last=last, started=started)
-                    try:
-                        DRILLS[action](dc)
-                        result.update(ok=True, message=f"Done: {action.replace('-', ' ')} {DCS[dc]['name']}")
-                    except (SystemExit, Exception) as e:
-                        result.update(ok=False, message=f"Failed: {e}")
-                result["finished"] = time.time()
-                last = result
-                (REQ_DIR / "results" / f"{rid or 'invalid'}.json").write_text(json.dumps(result))
-                _runner_beat(last=last, started=started)
+            try:
+                last = _runner_round(last, started)
+            except Exception:                      # never let one bad round kill the runner
+                import traceback
+                print(f"[{time.strftime('%H:%M:%S')}] error in drill runner round (continuing):", flush=True)
+                traceback.print_exc()
+                sys.stdout.flush()
             time.sleep(1)
     except KeyboardInterrupt:
         pass
     RUNNER_FILE.unlink(missing_ok=True)
     print(f"[{time.strftime('%H:%M:%S')}] drill runner stopped", flush=True)
+
+
+def _runner_round(last, started):
+    """One pass: heartbeat, then carry out any queued requests. Returns the last result."""
+    _runner_beat(last=last, started=started)
+    for f in sorted(REQ_DIR.glob("*.json")):
+        try:
+            req = json.loads(f.read_text())
+            f.unlink()                                # claim it
+        except (OSError, ValueError):
+            continue                                  # half-written or locked: next pass
+        rid, dc, action = str(req.get("id", ""))[:40], req.get("dc"), req.get("action")
+        result = {"id": rid, "dc": dc, "action": action, "started": time.time()}
+        if dc not in DCS or action not in DRILLS or not rid.replace("-", "").isalnum():
+            result.update(ok=False, message="Rejected: unknown data center or action")
+        else:
+            print(f"\n[{time.strftime('%H:%M:%S')}] {action} {DCS[dc]['name']} (requested from the landing page)", flush=True)
+            _runner_beat(busy=f"{action} {dc}", last=last, started=started)
+            try:
+                DRILLS[action](dc)
+                result.update(ok=True, message=f"Done: {action.replace('-', ' ')} {DCS[dc]['name']}")
+            except (SystemExit, Exception) as e:
+                result.update(ok=False, message=f"Failed: {e}")
+        result["finished"] = time.time()
+        last = result
+        _atomic_write(REQ_DIR / "results" / f"{rid or 'invalid'}.json", json.dumps(result))
+        _runner_beat(last=last, started=started)
+    return last
 
 
 def cmd_up(_args=None):
