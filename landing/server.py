@@ -36,14 +36,28 @@ PORT = int(os.environ.get("LANDING_LISTEN_PORT", "8080"))
 HAPROXY_AUTH = os.environ.get("HAPROXY_STATS_AUTH", "")  # user:password, set in docker-compose.yml
 TIMEOUT = 2.0
 
-ETCD = ["etcd1", "etcd2", "etcd3"]
-PATRONI = ["patroni1", "patroni2", "patroni3"]
-EXPORTERS = ["pg-exporter1", "pg-exporter2", "pg-exporter3"]
+STATE_DIR = SRV / "state"
+BGP_STALE_S = 15     # a status file older than this means its writer is down
+
+# Layout comes from lab.py (config/landing/topology.json): which DC holds what.
+TOPO = json.loads((CONFIG_DIR / "landing" / "topology.json").read_text())
+DCS = TOPO["dcs"]
+ETCD = [e for d in DCS.values() for e in d["etcd"]]
+PATRONI = [p for d in DCS.values() for p in d["patroni"]]
+EXPORTERS = [TOPO["exporters"][p] for p in PATRONI]
+HAPROXIES = [d["haproxy"] for d in DCS.values() if d["haproxy"]]
+SPEAKERS = [d["bgp"] for d in DCS.values() if d["bgp"]]
+DC_OF = {n: k for k, d in DCS.items()
+         for n in d["patroni"] + d["etcd"] + [x for x in (d["haproxy"], d["bgp"]) if x]}
+DC_OF.update({TOPO["exporters"][p]: DC_OF[p] for p in PATRONI})
+GW_DC = {d["wan_ip"]: k for k, d in DCS.items() if d["wan_ip"]}   # BGP next hop -> DC
 
 # Which mounted files belong to which service (relative to /srv)
 SERVICE_FILES = {
     **{p: [f"config/{p}.yml", "patroni-image/Dockerfile", "patroni-image/entrypoint.sh"] for p in PATRONI},
-    "haproxy": ["config/haproxy/haproxy.cfg"],
+    **{h: ["config/haproxy/haproxy.cfg"] for h in HAPROXIES},
+    **{b: ["bgp/health.py", "bgp/entrypoint.sh", "bgp/Dockerfile"] for b in SPEAKERS},
+    "edge": ["config/edge/frr.conf", "config/edge/daemons", "edge/entrypoint.sh", "edge/status.sh", "edge/Dockerfile"],
     "prometheus": ["config/prometheus/prometheus.yml"],
     "grafana": ["config/grafana/provisioning/datasources/datasource.yml",
                 "config/grafana/provisioning/dashboards/provider.yml"],
@@ -53,7 +67,9 @@ SERVICE_FILES = {
 SERVICE_INFO = {
     "etcd": "Distributed key-value store. Holds Patroni's leader lock and cluster state (Raft, 2 of 3 for quorum).",
     "patroni": "PostgreSQL managed by Patroni. One leader accepts writes; replicas stream WAL from it.",
-    "haproxy": "Routes port 5000 to the current leader and port 5001 across replicas, using Patroni health checks.",
+    "haproxy": "Routes port 5000 to the current primary (in any DC) and port 5001 to replicas, falling back to the primary when no replica is left. Same config in every DC.",
+    "bgp": "ExaBGP speaker sharing this DC's HAProxy network namespace. Announces the write VIP while HAProxy reaches the primary (lower MED when the primary is in this DC) and the read VIP while it reaches a replica.",
+    "edge": "Edge router (FRR, BGP). Learns the VIPs from every DC, picks the lowest MED, and forwards localhost:6432/6433 to the winning DC's HAProxy.",
     "pg-exporter": "Turns PostgreSQL statistics views into Prometheus metrics for one node.",
     "prometheus": "Scrapes Patroni, etcd and the exporters every 10-15 seconds and stores the time series.",
     "grafana": "Dashboards on top of Prometheus. The PostgreSQL HA dashboard is the home page.",
@@ -132,24 +148,89 @@ def probe_cluster():
     return {}
 
 
-def probe_haproxy():
-    code, csv = fetch("http://haproxy:7000/;csv", auth=HAPROXY_AUTH)
+def probe_haproxy(name):
+    code, csv = fetch(f"http://{name}:7000/;csv", auth=HAPROXY_AUTH)
     if code != 200:
         raise RuntimeError(f"stats page returned HTTP {code}")
     rows = [l.split(",") for l in csv.splitlines() if l and not l.startswith("#")]
-    backends = {"write": {}, "read": {}}
+    backends = {"write": {}, "read": {}, "read_any": {}}
     for r in rows:
         px, sv, status = r[0], r[1], r[17]
-        key = {"postgresql_write": "write", "postgresql_read": "read"}.get(px)
+        key = {"postgresql_write": "write", "postgresql_replicas": "read", "postgresql_read_any": "read_any"}.get(px)
         if key and sv not in ("FRONTEND", "BACKEND"):
             backends[key][sv] = status
     w = [s for s, v in backends["write"].items() if v == "UP"]
     rd = [s for s, v in backends["read"].items() if v == "UP"]
+    fallback = not rd and [s for s, v in backends["read_any"].items() if v == "UP"]
+    reads = ", ".join(rd) if rd else (f"{', '.join(fallback)} (fallback, no replicas)" if fallback else "nobody")
     return {
-        "status": "up" if w and rd else ("degraded" if w or rd else "down"),
+        "status": "up" if w and (rd or fallback) else ("degraded" if w or rd or fallback else "down"),
         "backends": backends,
-        "summary": f"Writes to {', '.join(w) or 'nobody'}; reads from {', '.join(rd) or 'nobody'}",
+        "summary": f"Writes to {', '.join(w) or 'nobody'}; reads from {reads}",
     }
+
+
+def read_status_file(name):
+    """JSON a sidecar writes into state/bgp/. Raises if missing or stale."""
+    p = STATE_DIR / "bgp" / f"{name}.json"
+    d = json.loads(p.read_text())
+    age = time.time() - float(d.get("updated", 0))
+    if age > BGP_STALE_S:
+        raise RuntimeError(f"no update for {int(age)} s")
+    return d
+
+
+def probe_bgp(name):
+    d = read_status_file(name)
+    w, r = d.get("write", {}), d.get("read", {})
+    parts = []
+    parts.append(f"write VIP MED {w['med']}" if w.get("announcing") else "write VIP withdrawn")
+    parts.append(f"read VIP MED {r['med']}" if r.get("announcing") else "read VIP withdrawn")
+    return {
+        "status": "up" if w.get("announcing") and r.get("announcing") else ("degraded" if w.get("announcing") or r.get("announcing") else "down"),
+        "summary": ", ".join(parts),
+        "write": w, "read": r, "leader_seen": d.get("leader"),
+    }
+
+
+def _paths(paths_json):
+    out = []
+    for pth in (paths_json or {}).get("paths", []):
+        hop = (pth.get("nexthops") or [{}])[0].get("ip") or pth.get("peer", {}).get("peerId")
+        out.append({"dc": GW_DC.get(hop), "next_hop": hop, "med": pth.get("metric"),
+                    "best": bool(pth.get("bestpath", {}).get("overall")),
+                    "as_path": pth.get("aspath", {}).get("string")})
+    return out
+
+
+def probe_edge():
+    d = read_status_file("edge")
+    summ = d.get("summary", {})
+    peers = summ.get("peers") or summ.get("ipv4Unicast", {}).get("peers", {})   # shape depends on the vtysh command
+    sessions = {GW_DC.get(ip, ip): {"state": p.get("state"), "prefixes": p.get("pfxRcd", 0), "up": p.get("peerUptime")}
+                for ip, p in peers.items()}
+
+    def route(kernel):
+        gw = (kernel or [{}])[0].get("gateway") if kernel else None
+        return GW_DC.get(gw)
+
+    write_dc, read_dc = route(d.get("kernel")), route(d.get("read_kernel"))
+    name = lambda k: DCS[k]["name"] if k else "nowhere"
+    est = sum(1 for x in sessions.values() if x["state"] == "Established")
+    return {
+        "status": "up" if write_dc and read_dc else ("degraded" if write_dc or read_dc else "down"),
+        "summary": f"Write VIP to {name(write_dc)}, read VIP to {name(read_dc)}; {est} of {len(sessions)} BGP sessions up",
+        "write_dc": write_dc, "read_dc": read_dc, "sessions": sessions,
+        "write_paths": _paths(d.get("paths")), "read_paths": _paths(d.get("read_paths")),
+        "vip": d.get("vip"), "vip_read": d.get("vip_read"), "table_text": d.get("table_text", ""),
+    }
+
+
+def lab_state():
+    try:
+        return json.loads((STATE_DIR / "lab-state.json").read_text())
+    except (OSError, ValueError):
+        return {"down": [], "partitioned": []}
 
 
 def probe_exporter(name):
@@ -202,7 +283,9 @@ def probe_grafana():
 PROBES = {
     **{n: (lambda n=n: probe_etcd(n)) for n in ETCD},
     **{n: (lambda n=n: probe_patroni(n)) for n in PATRONI},
-    "haproxy": probe_haproxy,
+    **{h: (lambda h=h: probe_haproxy(h)) for h in HAPROXIES},
+    **{b: (lambda b=b: probe_bgp(b)) for b in SPEAKERS},
+    "edge": probe_edge,
     **{n: (lambda n=n: probe_exporter(n)) for n in EXPORTERS},
     "prometheus": probe_prometheus,
     "grafana": probe_grafana,
@@ -227,6 +310,7 @@ def collect_status():
         svc["image"] = compose.get(name, {}).get("image")
         svc["ports"] = compose.get(name, {}).get("ports", [])
         svc["kind"] = kind_of(name)
+        svc["dc"] = DC_OF.get(name)
     for i, name in enumerate(PATRONI):
         m = cluster.get(name) if isinstance(cluster, dict) else None
         if m:
@@ -235,7 +319,8 @@ def collect_status():
     services["landing"] = {"status": "up", "summary": "Serving this page", "kind": "landing",
                            "image": compose.get("landing", {}).get("image"),
                            "ports": compose.get("landing", {}).get("ports", [])}
-    return {"checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "services": services}
+    return {"checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "services": services,
+            "topology": TOPO, "lab": lab_state()}
 
 
 def postgres_view(pat, exp):
@@ -261,7 +346,8 @@ def postgres_view(pat, exp):
 
 
 def kind_of(name):
-    return re.sub(r"\d+$", "", name)
+    """patroni2 -> patroni, haproxy-a -> haproxy, bgp-b -> bgp"""
+    return re.sub(r"(\d+|-[a-z])$", "", name)
 
 
 # --------------------------------------------------------------------------
@@ -290,7 +376,7 @@ def parse_compose():
     for name, text in compose_blocks().items():
         img = re.search(r"^\s+image:\s*(\S+)", text, re.M)
         ports = re.findall(r'^\s+-\s*"(\d+):(\d+)"', text, re.M)
-        out[name] = {"image": img and img.group(1), "ports": [{"host": int(h), "container": int(c)} for h, c in ports]}
+        out[name] = {"image": img and img.group(1).strip("\"'"), "ports": [{"host": int(h), "container": int(c)} for h, c in ports]}
     return out
 
 
@@ -319,6 +405,14 @@ def live_config(name):
     if k == "grafana":
         _, h = fetch_json("http://grafana:3000/api/health")
         return [{"name": "Health", "lang": "json", "content": json.dumps(h, indent=2)}]
+    if k == "edge":
+        d = read_status_file("edge")
+        return [{"name": "BGP table (show bgp ipv4 unicast)", "lang": "text", "content": d.get("table_text", "")},
+                {"name": "Sessions (show bgp summary json)", "lang": "json",
+                 "content": json.dumps(d.get("summary", {}), indent=2)}]
+    if k == "bgp":
+        d = read_status_file(name)
+        return [{"name": "What this speaker announces right now", "lang": "json", "content": json.dumps(d, indent=2)}]
     return []
 
 

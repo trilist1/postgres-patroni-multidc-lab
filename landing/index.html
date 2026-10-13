@@ -63,7 +63,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
   background: var(--sheet); border: 1px solid var(--rule-faint); border-radius: 8px;
   overflow-x: auto; -webkit-overflow-scrolling: touch;
 }
-.board svg { display: block; width: 100%; min-width: 760px; height: auto; }
+.board svg { display: block; width: 100%; min-width: 900px; height: auto; }
 .lane-label { font-size: 13px; fill: var(--ink-soft); font-weight: 500; }
 .lane-rule { stroke: var(--rule-faint); stroke-width: 1; }
 .node { cursor: pointer; }
@@ -92,6 +92,22 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .edge-label { font-size: 12px; fill: var(--ink-soft); }
 .port-pill { font-size: 12px; font-weight: 500; }
 .quorum { fill: none; stroke: var(--rule); stroke-width: 1; stroke-dasharray: 1 3; }
+.dc-frame { fill: none; stroke: var(--rule); stroke-width: 1.25; }
+.dc-frame.down { stroke-dasharray: 6 4; }
+.dc-frame.cut { stroke: var(--down); stroke-width: 2; stroke-dasharray: 6 4; }
+.dc-group.down > :not(.dc-badge) { opacity: .45; }
+.dc-label { font-size: 15px; font-weight: 600; fill: var(--ink); }
+.dc-sub { font-size: 12px; fill: var(--ink-soft); }
+.dc-badge rect { fill: var(--down); }
+.dc-badge text { fill: #fff; font-size: 12px; font-weight: 500; }
+.edge.faint { opacity: .3; }
+.edge.cut { stroke: var(--down); stroke-dasharray: 3 4; opacity: .9; }
+.edge.bgp { stroke: var(--rule); stroke-width: 1.5; stroke-dasharray: none; }
+.vip-table td.best { color: var(--ok); font-weight: 500; }
+.vip-table td.backup { color: var(--ink-soft); }
+.vip-table td.gone { color: var(--down); }
+.drill code { font: 400 13px/1.5 "IBM Plex Mono", ui-monospace, monospace; background: var(--code-bg); padding: 1px 6px; border-radius: 3px; }
+.drill li { margin: 4px 0; }
 
 .legend { display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 12px 4px 0; font-size: .875rem; color: var(--ink-soft); }
 .legend span { display: inline-flex; align-items: center; gap: 8px; }
@@ -196,15 +212,39 @@ pre.code {
 
   <section aria-label="Cluster topology">
     <div class="board">
-      <svg id="topo" viewBox="0 0 1160 640" role="img" aria-label="Diagram of how the cluster services connect"></svg>
+      <svg id="topo" viewBox="0 0 1200 700" role="img" aria-label="Diagram of how the cluster services connect"></svg>
     </div>
     <div class="legend" aria-hidden="true">
-      <span><i class="swatch" style="border-color:var(--leader)"></i>Writes (port 5000)</span>
-      <span><i class="swatch" style="border-color:var(--read)"></i>Reads (port 5001)</span>
+      <span><i class="swatch" style="border-color:var(--leader)"></i>Writes (VIP :6432, HAProxy :5000)</span>
+      <span><i class="swatch" style="border-color:var(--read)"></i>Reads (VIP :6433, HAProxy :5001)</span>
+      <span><i class="swatch" style="border-color:var(--leader);opacity:.3"></i>Standby path (other DC)</span>
+      <span><i class="swatch" style="border-color:var(--down);border-top-style:dashed"></i>Cut by a partition</span>
       <span><i class="swatch" style="border-color:var(--leader);border-top-style:dashed"></i>WAL streaming</span>
       <span><i class="swatch" style="border-color:var(--rule)"></i>Leader lock in etcd</span>
       <span><i class="swatch" style="border-color:var(--rule);border-top-style:dotted"></i>Metrics scrape</span>
       <span>Select any box to see its configuration</span>
+    </div>
+  </section>
+
+  <section class="leader-panel" aria-label="Anycast VIP and data centers">
+    <div class="panel">
+      <h2>Anycast VIP</h2>
+      <p class="lead" id="vip-lead">Loading BGP state…</p>
+      <div class="table-wrap"><table class="vip-table history">
+        <thead><tr><th>VIP</th><th>Data center</th><th>MED</th><th>Route</th><th>Why</th></tr></thead>
+        <tbody id="vip-rows"></tbody>
+      </table></div>
+    </div>
+    <div class="panel drill">
+      <h2>Data centers</h2>
+      <p class="lead" id="dc-lead"></p>
+      <div id="dc-list"></div>
+      <p class="method-note">Simulate a failure from the repo folder, then watch this page:</p>
+      <ul>
+        <li><code>lab dc-down a</code> power cut (<code>lab dc-up a</code> to restore)</li>
+        <li><code>lab partition b</code> cut DC-B off the WAN (<code>lab heal b</code>)</li>
+        <li><code>lab dc-down c</code> lose the witness: nothing should change</li>
+      </ul>
     </div>
   </section>
 
@@ -263,8 +303,6 @@ pre.code {
 <script>
 "use strict";
 const SVGNS = "http://www.w3.org/2000/svg";
-const ORDER = ["haproxy","patroni1","patroni2","patroni3","pg-exporter1","pg-exporter2","pg-exporter3",
-               "etcd1","etcd2","etcd3","prometheus","grafana","landing"];
 const COLORS = { up: "var(--ok)", degraded: "var(--warn)", down: "var(--down)" };
 let last = null, lastAt = 0;
 
@@ -281,32 +319,38 @@ function text(parent, x, y, str, cls, anchor = "middle") {
   return t;
 }
 
-/* ---- layout (viewBox 1160 x 640) ---- */
-const COL = [255, 475, 695];
+/* ---- layout (viewBox 1200 x 700) ---- */
 const L = {
-  apps:  { x: 475, y: 52,  w: 230, h: 44 },
-  haproxy: { x: 475, y: 158, w: 390, h: 68 },
-  pg:    COL.map(x => ({ x, y: 304, w: 212, h: 136 })),      /* container frame */
-  tap:   COL.map(x => ({ x, y: 391, w: 168, h: 24 })),       /* pg-exporter chip, its own container */
-  etcd:  COL.map(x => ({ x, y: 548, w: 170, h: 60 })),
-  grafana: { x: 1015, y: 158, w: 210, h: 60 },
-  prometheus: { x: 1015, y: 318, w: 210, h: 68 },
+  apps:  { x: 200, y: 50, w: 330, h: 44 },
+  edge:  { x: 640, y: 50, w: 400, h: 64 },
+  dc: {                                     /* data center frames */
+    a: { x0: 20,  y0: 112, x1: 610, y1: 680 },
+    b: { x0: 630, y0: 112, x1: 940, y1: 680 },
+    c: { x0: 960, y0: 440, x1: 1180, y1: 680 },
+  },
+  mgmt:  { x0: 960, y0: 112, x1: 1180, y1: 420 },
+  bgp:     { a: { x: 315, y: 170, w: 210, h: 26 }, b: { x: 785, y: 170, w: 210, h: 26 } },
+  haproxy: { a: { x: 315, y: 238, w: 330, h: 80 }, b: { x: 785, y: 238, w: 290, h: 80 } },
+  pgx:   { patroni1: 170, patroni2: 460, patroni3: 785 },   /* container frame centres */
+  etcd:  { etcd1: { x: 315, y: 610, w: 170, h: 56 }, etcd2: { x: 785, y: 610, w: 170, h: 56 },
+           etcd3: { x: 1070, y: 610, w: 170, h: 56 } },
+  grafana: { x: 1070, y: 200, w: 196, h: 60 },
+  prometheus: { x: 1070, y: 300, w: 196, h: 64 },
 };
+const PG_ORDER = ["patroni1", "patroni2", "patroni3"];
+L.pg = PG_ORDER.map(n => ({ x: L.pgx[n], y: 378, w: 212, h: 136 }));
+L.tap = PG_ORDER.map(n => ({ x: L.pgx[n], y: 465, w: 168, h: 24 }));
 const yTop = b => b.y - b.h / 2, yBot = b => b.y + b.h / 2;
 
 function node(svg, name, box, title, sub, status, extra = {}) {
-  const g = el("g", { class: "node", tabindex: 0, role: "button", "data-svc": name, "aria-label": `${title}: ${status || "unknown"}. Open configuration` }, svg);
+  const g = el("g", { class: "node", tabindex: 0, role: "button", "data-svc": name, "aria-label": `${title}: ${status || "unknown"}. Open configuration` }, extra.parent || svg);
   el("rect", { class: "body", x: box.x - box.w / 2, y: yTop(box), width: box.w, height: box.h, rx: 6,
                stroke: COLORS[status] || "var(--rule)" }, g);
-  if (extra.leader) {
-    el("rect", { x: box.x - box.w / 2, y: yTop(box) - 22, width: 70, height: 22, rx: 3, fill: "var(--leader)" }, g);
-    const t = text(g, box.x - box.w / 2 + 35, yTop(box) - 6.5, "Leader", "port-pill");
-    t.setAttribute("fill", "#fff");
-  }
   el("circle", { cx: box.x - box.w / 2 + 16, cy: yTop(box) + 21, r: 5, fill: COLORS[status] || "var(--rule)" }, g);
   text(g, box.x - box.w / 2 + 28, yTop(box) + 26, title, "title", "start");
   if (sub) text(g, box.x - box.w / 2 + 16, yTop(box) + 46, sub, "sub", "start");
-  if (extra.sub2) text(g, box.x - box.w / 2 + 16, yTop(box) + 64, extra.sub2, "sub", "start");
+  if (extra.sub2) text(g, box.x - box.w / 2 + 16, yTop(box) + 62, extra.sub2, "sub", "start");
+  if (extra.sub3) text(g, box.x - box.w / 2 + 16, yTop(box) + 78 - 4, extra.sub3, "sub", "start");
   return g;
 }
 
@@ -319,7 +363,7 @@ function fmtUptime(iso) {
   const m = Math.floor(ms / 60000), h = Math.floor(m / 60), d = Math.floor(h / 24);
   return d >= 2 ? `up ${d} days` : h >= 1 ? `up ${h} h ${m % 60} min` : `up ${m} min`;
 }
-function drawPgNode(svg, n, i, S, isLeader) {
+function drawPgNode(svg, n, i, S, isLeader) {   /* svg = the node's data center group */
   const s = S[n] || {}, pg = s.pg || {}, ex = S["pg-exporter" + (i + 1)] || {};
   const f = L.pg[i], x0 = f.x - f.w / 2, y0 = yTop(f);
 
@@ -344,7 +388,7 @@ function drawPgNode(svg, n, i, S, isLeader) {
   else if (s.role === "leader") l1 = `Primary, read-write, timeline ${s.timeline}`;
   else l1 = `Replica, ${s.state || pg.state}, ${fmtLag(s.lag)}`;
   text(g, cx + 12, cy + 40, l1, "sub", "start");
-  if (pg.connections !== undefined) {
+  if (pg.connections !== undefined && pg.max_connections && pg.databases) {   /* partial stats while restarting */
     text(g, cx + 12, cy + 57, `${pg.connections} of ${pg.max_connections} connections, ${pg.active} active`, "sub", "start");
     text(g, cx + 12, cy + 74, `${pg.databases} databases, ${fmtBytes(pg.size_bytes)}, ${fmtUptime(pg.started)}`, "sub", "start");
   } else {
@@ -384,113 +428,214 @@ topo.addEventListener("keydown", e => {
   if (n && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openConfig(n); }
 });
 
+const dcName = (T, k) => (k && T.dcs[k] ? T.dcs[k].name : "nowhere");
+
 let lastKey = "";
 function render(data) {
-  const S = data.services, svg = topo;
-  const key = JSON.stringify(S);
+  const S = data.services, T = data.topology, lab = data.lab || { down: [], partitioned: [] }, svg = topo;
+  const key = JSON.stringify([S, lab]);
   if (key === lastKey) return;          /* nothing changed: keep DOM (and focus) stable */
   lastKey = key;
   const focused = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.svc : null;
   svg.replaceChildren();
 
-  /* lanes */
-  [["Applications", 52], ["Routing", 158], ["PostgreSQL", 304], ["Consensus", 548]].forEach(([label, y]) => {
-    text(svg, 22, y + 4, label, "lane-label", "start");
+  const leader = PG_ORDER.find(n => S[n] && S[n].role === "leader");
+  const edge = S.edge || {};
+  const isDown = k => (lab.down || []).includes(k), isCut = k => (lab.partitioned || []).includes(k);
+  const dcOf = n => (S[n] && S[n].dc) || null;
+  /* a line between two DCs crosses the WAN: red if either side is partitioned */
+  const wanCls = (a, b) => (a && b && a !== b && (isCut(a) || isCut(b))) ? " cut" : "";
+
+  /* ---- data center frames (drawn first, everything sits on top) ---- */
+  const frames = {};
+  Object.entries(L.dc).forEach(([k, f]) => {
+    const d = T.dcs[k], g = el("g", { class: "dc-group" + (isDown(k) ? " down" : "") }, svg);
+    el("rect", { class: "dc-frame" + (isDown(k) ? " down" : "") + (isCut(k) ? " cut" : ""),
+                 x: f.x0, y: f.y0, width: f.x1 - f.x0, height: f.y1 - f.y0, rx: 10 }, g);
+    text(g, f.x0 + 14, f.y0 + 22, d.name, "dc-label", "start");
+    text(g, f.x0 + 14, f.y0 + 38, d.asn ? `AS ${d.asn}` : "etcd only, no PostgreSQL", "dc-sub", "start");
+    const badge = isDown(k) ? "Powered off" : isCut(k) ? "Cut off from the WAN" : null;
+    if (badge) {
+      const b = el("g", { class: "dc-badge" }, g), w = badge.length * 7 + 20;
+      el("rect", { x: f.x1 - w - 10, y: f.y0 + 8, width: w, height: 22, rx: 4 }, b);
+      text(b, f.x1 - w / 2 - 10, f.y0 + 23, badge, "", "middle");
+    }
+    frames[k] = g;
   });
-  [105, 206, 470].forEach(y => el("line", { x1: 20, x2: 830, y1: y, y2: y, class: "lane-rule" }, svg));
-  el("line", { x1: 860, x2: 860, y1: 24, y2: 616, class: "lane-rule" }, svg);
-  text(svg, 1015, 52 + 4, "Monitoring", "lane-label");
+  const m = L.mgmt;
+  el("rect", { class: "dc-frame", x: m.x0, y: m.y0, width: m.x1 - m.x0, height: m.y1 - m.y0, rx: 10, "stroke-dasharray": "2 4" }, svg);
+  text(svg, m.x0 + 14, m.y0 + 22, "Management", "dc-label", "start");
+  text(svg, m.x0 + 14, m.y0 + 38, "reaches every DC directly", "dc-sub", "start");
 
-  const pgNames = ["patroni1", "patroni2", "patroni3"];
-  const leader = pgNames.find(n => S[n] && S[n].role === "leader");
-  const hb = (S.haproxy && S.haproxy.backends) || { write: {}, read: {} };
-
-  /* edges first so boxes sit on top */
-  el("line", { x1: L.apps.x, y1: yBot(L.apps), x2: L.haproxy.x, y2: yTop(L.haproxy), class: "edge dcs" }, svg);
-  pgNames.forEach((n, i) => {
-    const p = L.pg[i];
-    const isW = hb.write[n] === "UP", isR = hb.read[n] === "UP";
-    const sx = L.haproxy.x + (i - 1) * 90;
-    el("path", { d: `M${sx},${yBot(L.haproxy)} C${sx},${yBot(L.haproxy) + 40} ${p.x},${yTop(p) - 50} ${p.x},${yTop(p)}`,
-                 class: "edge" + (isW ? " write" : isR ? " read" : "") }, svg);
-    /* to etcd quorum */
-    el("line", { x1: p.x, y1: yBot(L.tap[i]), x2: L.etcd[i].x, y2: yTop(L.etcd[i]) - 14,
-                 class: "edge" + (S[n] && S[n].status !== "down" ? " dcs" : "") }, svg);
+  /* ---- edges ---- */
+  el("line", { x1: L.apps.x + L.apps.w / 2, y1: L.apps.y, x2: L.edge.x - L.edge.w / 2, y2: L.edge.y, class: "edge dcs" }, svg);
+  ["a", "b"].forEach(k => {
+    const c = L.bgp[k], sp = S[T.dcs[k].bgp] || {};
+    const carriesW = edge.write_dc === k, carriesR = edge.read_dc === k;
+    const sess = (edge.sessions || {})[k] || {};
+    const cls = sess.state !== "Established" ? "" : carriesW ? " write" : carriesR ? " read" : " bgp";
+    const ex = L.edge.x + (k === "a" ? -120 : 120);
+    el("path", { d: `M${ex},${yBot(L.edge)} C${ex},${yBot(L.edge) + 30} ${c.x},${yTop(c) - 30} ${c.x},${yTop(c)}`,
+                 class: "edge" + cls + wanCls(k, "wan") }, svg);
+    el("line", { x1: c.x, y1: yBot(c), x2: c.x, y2: yTop(L.haproxy[k]), class: "edge dcs" }, svg);
   });
-  text(svg, L.haproxy.x + L.haproxy.w / 2 + 10, L.haproxy.y + 4, "health checks on :8008", "edge-label", "start");
 
-  /* replication arcs leader -> replicas */
+  /* HAProxy -> PostgreSQL, for both DCs. The DC carrying the VIP is drawn bold. */
+  ["a", "b"].forEach(k => {
+    const h = T.dcs[k].haproxy, hb = (S[h] && S[h].backends) || { write: {}, read: {}, read_any: {} };
+    /* bold only where that VIP actually lands: writes and reads can enter through different DCs */
+    const activeW = edge.write_dc === k, activeR = edge.read_dc === k;
+    const hp = L.haproxy[k];
+    PG_ORDER.forEach((n, i) => {
+      const p = L.pg[i];
+      const isW = hb.write[n] === "UP";
+      const isR = hb.read[n] === "UP" || (!Object.values(hb.read).includes("UP") && hb.read_any && hb.read_any[n] === "UP");
+      if (!isW && !isR) return;
+      const sx = hp.x + (p.x - hp.x) * 0.25;
+      el("path", { d: `M${sx},${yBot(hp)} C${sx},${yBot(hp) + 30} ${p.x},${yTop(p) - 40} ${p.x},${yTop(p)}`,
+                   class: "edge" + (isW ? " write" : " read") + ((isW ? activeW : activeR) ? "" : " faint") + wanCls(k, dcOf(n)) }, svg);
+    });
+  });
+
+  /* replication: leader -> each replica, U-shaped below the exporter chips */
   if (leader) {
-    const li = pgNames.indexOf(leader);
-    pgNames.forEach((n, i) => {
-      if (i === li) return;
-      /* U-shaped: drops straight down through the gap between exporter chips, runs below them */
-      const a = L.pg[li], b = L.pg[i], drop = Math.abs(i - li) === 2 ? 88 : 64;
-      const streaming = S[n] && S[n].state === "streaming";
+    const li = PG_ORDER.indexOf(leader);
+    PG_ORDER.forEach((n, i) => {
+      if (i === li || !S[n]) return;
+      const a = L.pg[li], b = L.pg[i], drop = Math.abs(i - li) === 2 ? 92 : 68;
+      const streaming = S[n].state === "streaming";
       const off = a.w / 2 - 14, x1 = a.x + (i > li ? off : -off), x2 = b.x + (i > li ? -off : off), y = yBot(a);
       el("path", { d: `M${x1},${y} C${x1},${y + drop} ${x2},${y + drop} ${x2},${y}`,
-                   class: "edge repl" + (streaming ? "" : " stalled") }, svg);
+                   class: "edge repl" + (streaming ? "" : " stalled") + wanCls(dcOf(leader), dcOf(n)) }, svg);
     });
   }
 
-  /* etcd quorum frame + peers */
-  el("rect", { x: 150, y: yTop(L.etcd[0]) - 14, width: 650, height: L.etcd[0].h + 28, rx: 8, class: "quorum" }, svg);
+  /* each Patroni node talks to its local etcd member (and through it to the quorum) */
+  PG_ORDER.forEach((n, i) => {
+    const e = T.dcs[dcOf(n) || "a"].etcd[0], eb = L.etcd[e];
+    el("line", { x1: L.tap[i].x, y1: yBot(L.tap[i]), x2: eb.x, y2: yTop(eb), class: "edge" + (S[n] && S[n].status !== "down" ? " dcs" : "") }, svg);
+  });
+  /* etcd Raft peers across the WAN */
+  [["etcd1", "etcd2"], ["etcd2", "etcd3"]].forEach(([a, b]) => {
+    const A = L.etcd[a], B = L.etcd[b];
+    el("line", { x1: A.x + A.w / 2, y1: A.y, x2: B.x - B.w / 2, y2: B.y, class: "edge dcs" + wanCls(dcOf(a), dcOf(b)) }, svg);
+  });
+  const E1 = L.etcd.etcd1, E3 = L.etcd.etcd3;
+  el("path", { d: `M${E1.x},${yBot(E1)} C${E1.x},${yBot(E1) + 40} ${E3.x},${yBot(E3) + 40} ${E3.x},${yBot(E3)}`,
+               class: "edge dcs" + wanCls("a", "c") }, svg);
   const quorumUp = ["etcd1", "etcd2", "etcd3"].filter(n => S[n] && S[n].status === "up").length;
-  text(svg, 790, yBot(L.etcd[0]) + 30, `Raft quorum: ${quorumUp} of 3 members healthy`, "edge-label", "end");
-  [[0, 1], [1, 2]].forEach(([a, b]) => el("line", { x1: L.etcd[a].x + 85, y1: L.etcd[a].y, x2: L.etcd[b].x - 85, y2: L.etcd[b].y, class: "edge dcs" }, svg));
+  text(svg, 600, 694, `etcd Raft quorum: ${quorumUp} of 3 healthy (2 needed)`, "edge-label", "middle");
 
-  /* monitoring edges */
+  /* monitoring */
   el("line", { x1: L.grafana.x, y1: yBot(L.grafana), x2: L.prometheus.x, y2: yTop(L.prometheus), class: "edge dcs" }, svg);
-  el("path", { d: `M${L.prometheus.x - 105},${L.prometheus.y} L${800},${L.prometheus.y}`, class: "edge scrape" }, svg);
-  el("path", { d: `M${L.prometheus.x},${yBot(L.prometheus)} L${L.prometheus.x},${L.etcd[2].y} L${800},${L.etcd[2].y}`, class: "edge scrape" }, svg);
-  text(svg, 832, L.prometheus.y - 8, "scrapes", "edge-label", "start");
+  text(svg, L.prometheus.x, yBot(L.prometheus) + 20, "scrapes all three DCs", "edge-label", "middle");
 
-  /* boxes */
+  /* ---- boxes ---- */
   const appsG = el("g", {}, svg);
   el("rect", { x: L.apps.x - L.apps.w / 2, y: yTop(L.apps), width: L.apps.w, height: L.apps.h, rx: 22,
                fill: "none", stroke: "var(--rule)", "stroke-dasharray": "3 3" }, appsG);
-  text(appsG, L.apps.x, L.apps.y + 5, "Your applications (psql, apps)", "sub");
+  text(appsG, L.apps.x, L.apps.y + 5, `Your apps: localhost:${T.vip_write_port} write, :${T.vip_read_port} read`, "sub");
 
-  const h = S.haproxy || {};
-  node(svg, "haproxy", L.haproxy, "HAProxy", h.summary, h.status, { sub2: "localhost:5000 writes, localhost:5001 reads" });
+  const wp = (edge.write_paths || []).find(p => p.best), rp = (edge.read_paths || []).find(p => p.best);
+  node(svg, "edge", L.edge, `Edge router (FRR, AS ${T.edge.asn})`,
+       `Write VIP ${T.vip} to ${dcName(T, edge.write_dc)}${wp ? ` (MED ${wp.med})` : ", no route"}`, edge.status,
+       { sub2: `Read VIP ${T.vip_read} to ${dcName(T, edge.read_dc)}${rp ? ` (MED ${rp.med})` : ", no route"}` });
 
-  pgNames.forEach((n, i) => drawPgNode(svg, n, i, S, n === leader));
-
-  ["etcd1", "etcd2", "etcd3"].forEach((n, i) => {
-    const s = S[n] || {};
-    node(svg, n, L.etcd[i], n, s.role ? (s.role === "raft leader" ? "Raft leader" : "Follower") : s.summary, s.status);
+  ["a", "b"].forEach(k => {
+    const d = T.dcs[k], sp = S[d.bgp] || {}, c = L.bgp[k], g = frames[k];
+    const chip = el("g", { class: "node", tabindex: 0, role: "button", "data-svc": d.bgp,
+                           "aria-label": `${d.bgp}: ${sp.summary || sp.status}. Open configuration` }, g);
+    el("rect", { class: "body chip", x: c.x - c.w / 2, y: yTop(c), width: c.w, height: c.h, rx: 13, stroke: COLORS[sp.status] || "var(--rule)" }, chip);
+    el("circle", { cx: c.x - c.w / 2 + 14, cy: c.y, r: 4, fill: COLORS[sp.status] || "var(--rule)" }, chip);
+    const w = sp.write || {}, r = sp.read || {};
+    const label = sp.status === "down" && !w.vip ? `${d.bgp}: not running`
+      : `${d.bgp}: write ${w.announcing ? "MED " + w.med : "withdrawn"}, read ${r.announcing ? "MED " + r.med : "withdrawn"}`;
+    text(chip, c.x - c.w / 2 + 24, c.y + 4, label, "tap", "start");
+    const h = S[d.haproxy] || {}, [pw, pr] = d.haproxy_ports;
+    const [wTxt, rTxt] = (h.summary || "").split("; ");
+    node(svg, d.haproxy, L.haproxy[k], `HAProxy (${d.name})`, wTxt, h.status,
+         { sub2: rTxt ? rTxt.charAt(0).toUpperCase() + rTxt.slice(1) : "", sub3: `localhost:${pw} writes, localhost:${pr} reads`, parent: g });
   });
 
-  const g = S.grafana || {}, p = S.prometheus || {};
-  node(svg, "grafana", L.grafana, "Grafana", g.version ? `v${g.version}, localhost:3000` : g.summary, g.status);
-  node(svg, "prometheus", L.prometheus, "Prometheus", p.summary, p.status, { sub2: "localhost:9091" });
+  PG_ORDER.forEach((n, i) => S[n] && drawPgNode(frames[dcOf(n) || "a"], n, i, S, n === leader));
 
-  renderTable(S);
-  renderVerdict(S, leader);
+  Object.entries(L.etcd).forEach(([n, box]) => {
+    const s = S[n] || {};
+    node(svg, n, box, n, s.role ? (s.role === "raft leader" ? "Raft leader" : "Follower") : s.summary, s.status,
+         { parent: frames[dcOf(n)] });
+  });
+
+  const gf = S.grafana || {}, pr = S.prometheus || {};
+  node(svg, "grafana", L.grafana, "Grafana", gf.version ? `v${gf.version}, localhost:3000` : gf.summary, gf.status);
+  node(svg, "prometheus", L.prometheus, "Prometheus", pr.summary, pr.status, { sub2: "localhost:9091" });
+
+  renderTable(S, T);
+  renderVerdict(S, leader, T, edge, lab);
+  renderVip(S, T, edge, lab);
   if (focused) { const f = svg.querySelector(`[data-svc="${focused}"]`); if (f) f.focus(); }
 }
 
-function renderVerdict(S, leader) {
+function renderVerdict(S, leader, T, edge, lab) {
   const all = Object.values(S), up = all.filter(s => s.status === "up").length;
-  const replicas = ["patroni1", "patroni2", "patroni3"].filter(n => S[n] && S[n].role !== "leader" && S[n].state === "streaming").length;
+  const replicas = PG_ORDER.filter(n => S[n] && S[n].role !== "leader" && S[n].state === "streaming").length;
   const etcd = ["etcd1", "etcd2", "etcd3"].filter(n => S[n] && S[n].status === "up").length;
+  const trouble = [...(lab.down || []).map(k => `${T.dcs[k].name} is powered off`),
+                   ...(lab.partitioned || []).map(k => `${T.dcs[k].name} is cut off from the WAN`)];
   const v = document.getElementById("verdict");
+  const tail = trouble.length ? ` <strong>${trouble.join(", ")}.</strong>` : "";
   if (!leader) {
-    v.innerHTML = `<strong>No leader right now.</strong> Writes are unavailable until Patroni elects one. etcd has ${etcd} of 3 members healthy.`;
+    v.innerHTML = `<strong>No primary right now.</strong> Writes are unavailable until Patroni elects one. etcd has ${etcd} of 3 members healthy.` + tail;
     return;
   }
-  v.innerHTML = `<strong>PostgreSQL in ${leader} is the primary</strong>, with ${replicas} of 2 replicas streaming. ` +
-    `etcd quorum ${etcd} of 3, and ${up} of ${all.length} services healthy.`;
+  v.innerHTML = `<strong>PostgreSQL in ${leader} (${dcName(T, S[leader].dc)}) is the primary</strong>, with ${replicas} of 2 replicas streaming. ` +
+    `Writes enter through ${dcName(T, edge.write_dc)}, reads through ${dcName(T, edge.read_dc)}. ` +
+    `${up} of ${all.length} services healthy.` + tail;
 }
 
-function renderTable(S) {
+function renderVip(S, T, edge, lab) {
+  const rows = document.getElementById("vip-rows");
+  rows.replaceChildren();
+  [["write", T.vip, edge.write_paths], ["read", T.vip_read, edge.read_paths]].forEach(([kind, ip, paths]) => {
+    ["a", "b"].forEach(k => {
+      const sp = (S[T.dcs[k].bgp] || {})[kind] || {}, p = (paths || []).find(x => x.dc === k);
+      const tr = document.createElement("tr");
+      const state = p ? (p.best ? ["best", "Winning"] : ["backup", "Backup"]) : ["gone", "Withdrawn"];
+      tr.innerHTML = "<td></td><td></td><td></td><td></td><td></td>";
+      tr.children[0].textContent = `${kind} ${ip}`;
+      tr.children[1].textContent = T.dcs[k].name;
+      tr.children[2].textContent = p ? p.med : "";
+      tr.children[3].textContent = state[1]; tr.children[3].className = state[0];
+      tr.children[4].textContent = sp.reason || (S[T.dcs[k].bgp] || {}).summary || "";
+      rows.appendChild(tr);
+    });
+  });
+  document.getElementById("vip-lead").textContent =
+    `Each data center's BGP speaker announces the VIPs to the edge router while its HAProxy can serve them. ` +
+    `The lowest MED wins. The DC holding the primary uses MED 50 for writes.`;
+  const list = document.getElementById("dc-list");
+  list.replaceChildren();
+  Object.entries(T.dcs).forEach(([k, d]) => {
+    const p = document.createElement("p");
+    p.className = "method-note";
+    const st = (lab.down || []).includes(k) ? "powered off" : (lab.partitioned || []).includes(k) ? "cut off from the WAN" : "running";
+    p.textContent = `${d.name}: ${st}. ${[...(d.haproxy ? [d.haproxy] : []), ...d.patroni, ...d.etcd].join(", ")}`;
+    list.appendChild(p);
+  });
+  document.getElementById("dc-lead").textContent = "Losing any one data center keeps etcd at 2 of 3 members, so failover is automatic.";
+}
+
+function renderTable(S, T) {
   const rows = document.getElementById("rows");
   rows.replaceChildren();
-  ORDER.forEach(name => {
+  const order = ["edge"];
+  Object.values(T.dcs).forEach(d => order.push(...[d.haproxy, d.bgp].filter(Boolean), ...d.patroni,
+                                                 ...d.patroni.map(p => T.exporters[p]), ...d.etcd));
+  order.push("prometheus", "grafana", "landing");
+  order.forEach(name => {
     const s = S[name]; if (!s) return;
     const tr = document.createElement("tr");
     const links = (s.ports || []).map(p => {
-      if ([5432, 5000, 5001].includes(p.container)) return `<span>localhost:${p.host}</span>`;
+      if ([5432, 5000, 5001, 6432, 6433].includes(p.container)) return `<span>localhost:${p.host}</span>`;
       const path = { 9187: "/metrics", 8008: "/patroni", 2379: "/health" }[p.container] || "/";
       return `<a href="http://localhost:${p.host}${path}" target="_blank" rel="noopener">localhost:${p.host}</a>`;
     }).join("");
@@ -498,7 +643,7 @@ function renderTable(S) {
       <td><span class="state ${s.status}"><i class="dot ${s.status}"></i>${{ up: "Healthy", degraded: "Degraded", down: "Down" }[s.status] || s.status}</span></td>
       <td class="sum"></td><td class="img"></td><td class="links">${links}</td>
       <td><button class="btn" type="button">View config</button></td>`;
-    tr.querySelector(".name").textContent = name;
+    tr.querySelector(".name").textContent = s.dc ? `${name} (${T.dcs[s.dc].name.split(" ")[0]})` : name;
     tr.querySelector(".sum").textContent = s.summary || "";
     tr.querySelector(".img").textContent = s.image || "";
     tr.querySelector("button").addEventListener("click", () => openConfig(name));
@@ -568,7 +713,8 @@ function renderLeadership(data) {
     const inp = l.querySelector("input");
     inp.value = n; inp.checked = n === pick; inp.disabled = !eligible(n);
     l.querySelector("b").textContent = n;
-    l.querySelector("small").textContent = s.status === "down" ? "down" : `${s.state || s.status}, ${fmtLag(s.lag)}`;
+    const where = last && last.topology && s.dc ? `${last.topology.dcs[s.dc].name.split(" ")[0]}, ` : "";
+    l.querySelector("small").textContent = s.status === "down" ? `${where}down` : `${where}${s.state || s.status}, ${fmtLag(s.lag)}`;
     inp.addEventListener("change", () => { pick = n; confirming = false; renderLeadership(last); });
     cand.appendChild(l);
   });

@@ -1,49 +1,121 @@
 {
   "Servers": {
     "1": {
-      "Name": "HA write (primary) :5000",
-      "Group": "pg-ha-cluster",
+      "Name": "VIP write (BGP anycast) :6432",
+      "Group": "pg-ha multi-DC",
+      "Host": "localhost",
+      "Port": 6432,
+      "MaintenanceDB": "postgres",
+      "Username": "postgres",
+      "ConnectionParameters": {
+        "sslmode": "prefer",
+        "gssencmode": "disable",
+        "connect_timeout": 10
+      }
+    },
+    "2": {
+      "Name": "VIP read (BGP anycast) :6433",
+      "Group": "pg-ha multi-DC",
+      "Host": "localhost",
+      "Port": 6433,
+      "MaintenanceDB": "postgres",
+      "Username": "postgres",
+      "ConnectionParameters": {
+        "sslmode": "prefer",
+        "gssencmode": "disable",
+        "connect_timeout": 10
+      }
+    },
+    "3": {
+      "Name": "DC-A HAProxy write :5000",
+      "Group": "pg-ha multi-DC - HAProxy per DC",
       "Host": "localhost",
       "Port": 5000,
       "MaintenanceDB": "postgres",
       "Username": "postgres",
-      "ConnectionParameters": { "sslmode": "prefer", "gssencmode": "disable", "connect_timeout": 10 }
+      "ConnectionParameters": {
+        "sslmode": "prefer",
+        "gssencmode": "disable",
+        "connect_timeout": 10
+      }
     },
-    "2": {
-      "Name": "HA read (replicas) :5001",
-      "Group": "pg-ha-cluster",
+    "4": {
+      "Name": "DC-A HAProxy read :5001",
+      "Group": "pg-ha multi-DC - HAProxy per DC",
       "Host": "localhost",
       "Port": 5001,
       "MaintenanceDB": "postgres",
       "Username": "postgres",
-      "ConnectionParameters": { "sslmode": "prefer", "gssencmode": "disable", "connect_timeout": 10 }
+      "ConnectionParameters": {
+        "sslmode": "prefer",
+        "gssencmode": "disable",
+        "connect_timeout": 10
+      }
     },
-    "3": {
-      "Name": "patroni1 direct :5433",
-      "Group": "pg-ha-cluster nodes",
+    "5": {
+      "Name": "DC-B HAProxy write :5100",
+      "Group": "pg-ha multi-DC - HAProxy per DC",
+      "Host": "localhost",
+      "Port": 5100,
+      "MaintenanceDB": "postgres",
+      "Username": "postgres",
+      "ConnectionParameters": {
+        "sslmode": "prefer",
+        "gssencmode": "disable",
+        "connect_timeout": 10
+      }
+    },
+    "6": {
+      "Name": "DC-B HAProxy read :5101",
+      "Group": "pg-ha multi-DC - HAProxy per DC",
+      "Host": "localhost",
+      "Port": 5101,
+      "MaintenanceDB": "postgres",
+      "Username": "postgres",
+      "ConnectionParameters": {
+        "sslmode": "prefer",
+        "gssencmode": "disable",
+        "connect_timeout": 10
+      }
+    },
+    "7": {
+      "Name": "patroni1 (DC-A) direct :5433",
+      "Group": "pg-ha multi-DC - nodes",
       "Host": "localhost",
       "Port": 5433,
       "MaintenanceDB": "postgres",
       "Username": "postgres",
-      "ConnectionParameters": { "sslmode": "prefer", "gssencmode": "disable", "connect_timeout": 10 }
+      "ConnectionParameters": {
+        "sslmode": "prefer",
+        "gssencmode": "disable",
+        "connect_timeout": 10
+      }
     },
-    "4": {
-      "Name": "patroni2 direct :5434",
-      "Group": "pg-ha-cluster nodes",
+    "8": {
+      "Name": "patroni2 (DC-A) direct :5434",
+      "Group": "pg-ha multi-DC - nodes",
       "Host": "localhost",
       "Port": 5434,
       "MaintenanceDB": "postgres",
       "Username": "postgres",
-      "ConnectionParameters": { "sslmode": "prefer", "gssencmode": "disable", "connect_timeout": 10 }
+      "ConnectionParameters": {
+        "sslmode": "prefer",
+        "gssencmode": "disable",
+        "connect_timeout": 10
+      }
     },
-    "5": {
-      "Name": "patroni3 direct :5435",
-      "Group": "pg-ha-cluster nodes",
+    "9": {
+      "Name": "patroni3 (DC-B) direct :5435",
+      "Group": "pg-ha multi-DC - nodes",
       "Host": "localhost",
       "Port": 5435,
       "MaintenanceDB": "postgres",
       "Username": "postgres",
-      "ConnectionParameters": { "sslmode": "prefer", "gssencmode": "disable", "connect_timeout": 10 }
+      "ConnectionParameters": {
+        "sslmode": "prefer",
+        "gssencmode": "disable",
+        "connect_timeout": 10
+      }
     }
   }
 }

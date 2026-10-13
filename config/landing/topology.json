@@ -1,0 +1,67 @@
+{
+  "cluster": "pg-ha-cluster",
+  "vip": "10.99.0.10",
+  "vip_read": "10.99.0.11",
+  "vip_write_port": 6432,
+  "vip_read_port": 6433,
+  "edge": {
+    "asn": 65000,
+    "wan_ip": "10.210.0.2"
+  },
+  "dcs": {
+    "a": {
+      "name": "DC-A",
+      "asn": 65001,
+      "patroni": [
+        "patroni1",
+        "patroni2"
+      ],
+      "etcd": [
+        "etcd1"
+      ],
+      "haproxy": "haproxy-a",
+      "haproxy_ports": [
+        5000,
+        5001,
+        7000
+      ],
+      "bgp": "bgp-a",
+      "wan_ip": "10.210.0.11"
+    },
+    "b": {
+      "name": "DC-B",
+      "asn": 65002,
+      "patroni": [
+        "patroni3"
+      ],
+      "etcd": [
+        "etcd2"
+      ],
+      "haproxy": "haproxy-b",
+      "haproxy_ports": [
+        5100,
+        5101,
+        7100
+      ],
+      "bgp": "bgp-b",
+      "wan_ip": "10.210.0.12"
+    },
+    "c": {
+      "name": "DC-C (witness)",
+      "asn": null,
+      "patroni": [],
+      "etcd": [
+        "etcd3"
+      ],
+      "haproxy": null,
+      "haproxy_ports": [],
+      "bgp": null,
+      "wan_ip": null
+    }
+  },
+  "exporters": {
+    "patroni1": "pg-exporter1",
+    "patroni2": "pg-exporter2",
+    "patroni3": "pg-exporter3"
+  }
+}

@@ -9,10 +9,11 @@ fi
 mkdir -p /var/lib/postgresql/data
 chown -R postgres:postgres /var/lib/postgresql/data
 chmod 700 /var/lib/postgresql/data
-echo "Waiting for etcd cluster..."
-ETCD_HOST=$(echo ${ETCD_HOSTS:-etcd1:2379} | cut -d',' -f1)
-until curl -sf "http://${ETCD_HOST}/health" > /dev/null 2>&1; do
-  echo "  etcd not ready at ${ETCD_HOST}, retrying in 3s..."
+echo "Waiting for any etcd member (one data center may be down)..."
+until for h in $(echo "${ETCD_HOSTS:-etcd1:2379}" | tr ',' ' '); do
+        curl -sf --max-time 2 "http://${h}/health" > /dev/null 2>&1 && echo "  reached ${h}" && break
+      done | grep -q reached; do
+  echo "  no etcd member reachable (${ETCD_HOSTS}), retrying in 3s..."
   sleep 3
 done
 echo "etcd is available."

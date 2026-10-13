@@ -14,6 +14,9 @@ bootstrap:
     loop_wait: 10
     retry_timeout: 10
     maximum_lag_on_failover: 1048576
+    # Keep a primary running when etcd is briefly unreachable, as long as it can
+    # still reach every other Patroni node (WAN blips between data centers).
+    failsafe_mode: true
     postgresql:
       use_pg_rewind: true
       use_slots: true
@@ -69,3 +72,7 @@ postgresql:
   basebackup:
     checkpoint: fast
     max-rate: "100M"
+
+# This node is in DC-B.
+tags:
+  dc: DC-B

@@ -5,7 +5,6 @@ global:
 scrape_configs:
   - job_name: "patroni"
     scrape_interval: 10s
-    metrics_path: /metrics
     static_configs:
       - targets:
           - "patroni1:8008"
@@ -14,11 +13,7 @@ scrape_configs:
         labels:
           cluster: "pg-ha-cluster"
 
-  # Job name "postgres" matches what standard Grafana community
-  # dashboards expect (e.g. dashboards 9628, 455, 12273, 14114).
-  # relabel_configs rewrites the instance label from the exporter
-  # address (pg-exporter1:9187) to the actual PG server
-  # (patroni1:5432) so standard dashboard variables work.
+  # Job "postgres" + instance relabel to patroniN:5432 so community dashboards work.
   - job_name: "postgres"
     scrape_interval: 15s
     static_configs:
@@ -26,14 +21,17 @@ scrape_configs:
         labels:
           cluster: "pg-ha-cluster"
           pg_node: "patroni1"
+          dc: "DC-A"
       - targets: ["pg-exporter2:9187"]
         labels:
           cluster: "pg-ha-cluster"
           pg_node: "patroni2"
+          dc: "DC-A"
       - targets: ["pg-exporter3:9187"]
         labels:
           cluster: "pg-ha-cluster"
           pg_node: "patroni3"
+          dc: "DC-B"
     relabel_configs:
       - source_labels: [pg_node]
         target_label: instance
@@ -42,7 +40,6 @@ scrape_configs:
 
   - job_name: "etcd"
     scrape_interval: 15s
-    metrics_path: /metrics
     static_configs:
       - targets:
           - "etcd1:2379"
