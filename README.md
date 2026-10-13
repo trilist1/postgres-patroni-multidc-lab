@@ -10,6 +10,12 @@ It grew out of the single-data-center lab
 ([postgres-patroni-ha-lab](https://github.com/trilist1/postgres-patroni-ha-lab)) and keeps its
 history, landing page and tooling.
 
+![The landing page at http://localhost:9090: three data centers, the edge router and both BGP speakers, the write path (blue) entering through DC-B to the primary patroni3, reads (teal) through DC-A, WAL streaming to the replicas, and the etcd quorum across all three sites](docs/landing-topology.png)
+
+*The management page at http://localhost:9090, live: which DC carries each VIP, the primary
+and its replicas, BGP speakers, HAProxy routing and the etcd quorum. It redraws every 5 seconds,
+so failovers and data-center failures play out on screen.*
+
 | Component | Version |
 |-----------|---------|
 | PostgreSQL | 18.6 |
@@ -177,6 +183,8 @@ Notes:
 ## Landing page
 
 **http://localhost:9090** draws the whole setup and refreshes every 5 seconds:
+
+![Anycast VIP panel showing each data center's BGP route, MED and reason, next to the Data centers panel with Cut power and Cut from WAN buttons for DC-A, DC-B and the DC-C witness](docs/landing-panels.png)
 
 - **Data center frames** with their AS numbers. Each PostgreSQL container shows PostgreSQL's own
   state (role, lag, connections, databases, size, uptime), with the Patroni agent as a row underneath
@@ -356,6 +364,7 @@ postgres-patroni-multidc-lab\        ← wherever you cloned it
 ├── bgp\                            ← BGP speaker image: ExaBGP + health.py
 ├── edge\                           ← edge router image: FRR + NAT + status writer
 ├── landing\                        ← landing page (server.py, index.html)
+├── docs\                           ← screenshots used in this README
 ├── config\                         ← generated configs (Patroni, HAProxy, FRR, Prometheus, Grafana)
 ├── certs\                          ← TLS material, generated, not in git
 ├── state\                          ← runtime state: lab-state.json, BGP status files (not in git)
