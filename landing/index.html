@@ -1,0 +1,728 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PostgreSQL HA Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --paper: #EDF1F4;
+  --sheet: #F8FAFB;
+  --ink: #1D2B3A;
+  --ink-soft: #4A5A6B;
+  --rule: #8A99AA;
+  --rule-faint: #C9D2DB;
+  --ok: #2B8A66;
+  --warn: #B9800F;
+  --down: #C03A3A;
+  --leader: #3352C2;
+  --read: #2B8A86;
+  --code-bg: #E3E9EE;
+  --focus: #3352C2;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #18212B; --sheet: #1F2A36; --ink: #E4EAF0; --ink-soft: #A3B1BF;
+    --rule: #6E7F91; --rule-faint: #33414F; --ok: #4CB98E; --warn: #E0A93A;
+    --down: #E86A6A; --leader: #7D96F0; --read: #4DBDB8; --code-bg: #141B23; --focus: #7D96F0;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #18212B; --sheet: #1F2A36; --ink: #E4EAF0; --ink-soft: #A3B1BF;
+  --rule: #6E7F91; --rule-faint: #33414F; --ok: #4CB98E; --warn: #E0A93A;
+  --down: #E86A6A; --leader: #7D96F0; --read: #4DBDB8; --code-bg: #141B23; --focus: #7D96F0;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--paper); color: var(--ink);
+  font: 400 16px/1.5 "IBM Plex Sans", system-ui, sans-serif;
+}
+a { color: var(--leader); }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.wrap { max-width: 1200px; margin: 0 auto; padding: 0 16px; }
+
+header.top { padding: 32px 0 20px; display: flex; flex-wrap: wrap; gap: 12px 32px; align-items: end; justify-content: space-between; }
+h1 { font-size: 2rem; line-height: 1.15; font-weight: 600; margin: 0 0 6px; letter-spacing: -0.01em; }
+.verdict { margin: 0; max-width: 62ch; color: var(--ink-soft); font-size: 1.05rem; }
+.verdict strong { color: var(--ink); font-weight: 600; }
+.checked { display: flex; gap: 12px; align-items: center; color: var(--ink-soft); font-size: .875rem; }
+button { font: inherit; color: inherit; cursor: pointer; }
+.btn {
+  border: 1px solid var(--rule); background: var(--sheet); border-radius: 4px;
+  padding: 5px 12px; font-size: .875rem; font-weight: 500;
+}
+.btn { white-space: nowrap; }
+.btn:hover { border-color: var(--ink); }
+
+/* ---------- topology ---------- */
+.board {
+  background: var(--sheet); border: 1px solid var(--rule-faint); border-radius: 8px;
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+}
+.board svg { display: block; width: 100%; min-width: 760px; height: auto; }
+.lane-label { font-size: 13px; fill: var(--ink-soft); font-weight: 500; }
+.lane-rule { stroke: var(--rule-faint); stroke-width: 1; }
+.node { cursor: pointer; }
+.node rect.body { fill: var(--sheet); stroke-width: 1.5; }
+.node:hover rect.body, .node:focus-visible rect.body { stroke-width: 2.5; }
+.node:focus-visible { outline: none; }
+.node .title { font-size: 15px; font-weight: 600; fill: var(--ink); }
+.node .sub { font-size: 12.5px; fill: var(--ink-soft); }
+.node .tap { font-size: 12px; fill: var(--ink-soft); }
+.node rect.frame { fill: var(--paper); stroke: var(--rule); stroke-width: 1; stroke-dasharray: 5 3; }
+.node:hover rect.frame, .node:focus-visible rect.frame { stroke: var(--ink); stroke-width: 1.5; }
+.node rect.pg-card { fill: var(--sheet); stroke-width: 1.75; }
+.node rect.chip { stroke-width: 1.25; }
+.node .container-label { font-size: 11.5px; fill: var(--ink-soft); }
+.node .agent { font-size: 12px; fill: var(--ink-soft); }
+.pill-text { font-size: 11px; font-weight: 500; }
+.edge { fill: none; stroke: var(--rule-faint); stroke-width: 1.5; stroke-dasharray: 4 5; }
+.edge.write { stroke: var(--leader); stroke-width: 3.5; stroke-dasharray: none; }
+.edge.read { stroke: var(--read); stroke-width: 2; stroke-dasharray: none; }
+.edge.dcs { stroke: var(--rule); stroke-width: 1.25; stroke-dasharray: none; }
+.edge.scrape { stroke: var(--rule); stroke-width: 1.25; stroke-dasharray: 2 4; }
+.edge.repl { stroke: var(--leader); stroke-width: 1.75; stroke-dasharray: 7 6; animation: flow 1.1s linear infinite; }
+.edge.repl.stalled { stroke: var(--warn); animation: none; }
+@keyframes flow { to { stroke-dashoffset: -13; } }
+@media (prefers-reduced-motion: reduce) { .edge.repl { animation: none; } }
+.edge-label { font-size: 12px; fill: var(--ink-soft); }
+.port-pill { font-size: 12px; font-weight: 500; }
+.quorum { fill: none; stroke: var(--rule); stroke-width: 1; stroke-dasharray: 1 3; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 12px 4px 0; font-size: .875rem; color: var(--ink-soft); }
+.legend span { display: inline-flex; align-items: center; gap: 8px; }
+.swatch { width: 28px; height: 0; border-top: 3px solid; display: inline-block; }
+
+/* ---------- services table ---------- */
+h2 { font-size: 1.25rem; font-weight: 600; margin: 40px 0 12px; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--rule-faint); border-radius: 8px; background: var(--sheet); }
+table { width: 100%; border-collapse: collapse; font-size: .9375rem; min-width: 720px; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--rule-faint); vertical-align: top; }
+th { font-weight: 500; color: var(--ink-soft); font-size: .8125rem; background: var(--paper); }
+tr:last-child td { border-bottom: 0; }
+td.name { font-weight: 600; white-space: nowrap; }
+.state { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; font-weight: 500; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
+.up { color: var(--ok); } .degraded { color: var(--warn); } .down { color: var(--down); }
+.dot.up { background: var(--ok); } .dot.degraded { background: var(--warn); } .dot.down { background: var(--down); }
+td.img { font-size: .8125rem; color: var(--ink-soft); word-break: break-all; }
+td.links a { white-space: nowrap; margin-right: 10px; }
+td.links span { white-space: nowrap; color: var(--ink-soft); margin-right: 10px; }
+
+/* ---------- change leader ---------- */
+.leader-panel { margin-top: 40px; display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 24px; }
+@media (max-width: 860px) { .leader-panel { grid-template-columns: 1fr; } }
+.panel { background: var(--sheet); border: 1px solid var(--rule-faint); border-radius: 8px; padding: 18px 20px; }
+.panel h2 { margin: 0 0 4px; }
+.panel .lead { margin: 0 0 16px; color: var(--ink-soft); max-width: 62ch; }
+fieldset { border: 0; padding: 0; margin: 0 0 16px; min-width: 0; }
+legend { font-weight: 500; font-size: .875rem; color: var(--ink-soft); margin-bottom: 8px; padding: 0; }
+.choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.choice { position: relative; }
+.choice input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.choice span {
+  display: block; border: 1px solid var(--rule); border-radius: 6px; padding: 8px 14px; min-width: 150px;
+  background: var(--sheet);
+}
+.choice span b { display: block; font-weight: 600; }
+.choice span small { color: var(--ink-soft); font-size: .8125rem; }
+.choice input:checked + span { border-color: var(--leader); box-shadow: inset 0 0 0 1px var(--leader); }
+.choice input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 2px; }
+.choice input:disabled + span { opacity: .5; }
+.method-note { font-size: .875rem; color: var(--ink-soft); margin: 8px 0 0; max-width: 62ch; }
+.btn-primary { background: var(--leader); border-color: var(--leader); color: #fff; padding: 7px 16px; }
+.btn-primary:hover { border-color: var(--ink); }
+.btn-primary.danger { background: var(--down); border-color: var(--down); }
+.btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+.confirm { border-left: 3px solid var(--warn); padding: 10px 14px; background: var(--paper); border-radius: 0 6px 6px 0; margin-top: 4px; }
+.confirm p { margin: 0 0 10px; max-width: 62ch; }
+.confirm .row, .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.outcome { margin: 12px 0 0; font-weight: 500; }
+.outcome.ok { color: var(--ok); } .outcome.fail { color: var(--down); } .outcome.busy { color: var(--ink-soft); }
+.history { width: 100%; min-width: 0; font-size: .875rem; }
+.history td, .history th { padding: 7px 8px; }
+.history-empty { color: var(--ink-soft); font-size: .875rem; }
+
+footer { padding: 40px 0 48px; color: var(--ink-soft); font-size: .875rem; }
+
+/* ---------- config dialog ---------- */
+dialog {
+  width: min(1000px, calc(100vw - 32px)); max-height: calc(100vh - 48px);
+  border: 1px solid var(--rule); border-radius: 8px; padding: 0;
+  background: var(--sheet); color: var(--ink);
+}
+dialog::backdrop { background: rgba(20, 30, 40, .45); }
+dialog[open] { display: flex; flex-direction: column; animation: rise .18s ease-out; }
+@keyframes rise { from { transform: translateY(8px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { dialog[open] { animation: none; } }
+.dlg-head { padding: 18px 20px 12px; border-bottom: 1px solid var(--rule-faint); display: flex; gap: 16px; align-items: start; justify-content: space-between; }
+.dlg-head h3 { margin: 0; font-size: 1.25rem; }
+.dlg-head p { margin: 4px 0 0; color: var(--ink-soft); font-size: .9375rem; max-width: 70ch; }
+.dlg-tools { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; padding: 10px 20px; border-bottom: 1px solid var(--rule-faint); font-size: .875rem; }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.tab { border: 1px solid var(--rule-faint); background: transparent; border-radius: 4px; padding: 4px 10px; font-size: .8125rem; }
+.tab small { color: var(--ink-soft); margin-right: 6px; }
+.tab[aria-selected="true"] { border-color: var(--ink); background: var(--paper); font-weight: 500; }
+.dlg-tools label { display: inline-flex; gap: 6px; align-items: center; margin-left: auto; }
+pre.code {
+  margin: 0; padding: 16px 20px; overflow: auto; flex: 1; min-height: 200px;
+  background: var(--code-bg); font: 400 13px/1.55 "IBM Plex Mono", ui-monospace, monospace; tab-size: 4;
+}
+.dlg-foot { padding: 10px 20px; display: flex; justify-content: space-between; gap: 12px; font-size: .8125rem; color: var(--ink-soft); }
+.error { color: var(--down); }
+
+@media (max-width: 640px) {
+  h1 { font-size: 1.6rem; }
+  header.top { padding-top: 24px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>pg-ha-cluster</h1>
+      <p class="verdict" id="verdict">Checking every service…</p>
+    </div>
+    <div class="checked">
+      <span id="checked" aria-live="polite"></span>
+      <button class="btn" id="refresh" type="button">Refresh now</button>
+    </div>
+  </header>
+
+  <section aria-label="Cluster topology">
+    <div class="board">
+      <svg id="topo" viewBox="0 0 1160 640" role="img" aria-label="Diagram of how the cluster services connect"></svg>
+    </div>
+    <div class="legend" aria-hidden="true">
+      <span><i class="swatch" style="border-color:var(--leader)"></i>Writes (port 5000)</span>
+      <span><i class="swatch" style="border-color:var(--read)"></i>Reads (port 5001)</span>
+      <span><i class="swatch" style="border-color:var(--leader);border-top-style:dashed"></i>WAL streaming</span>
+      <span><i class="swatch" style="border-color:var(--rule)"></i>Leader lock in etcd</span>
+      <span><i class="swatch" style="border-color:var(--rule);border-top-style:dotted"></i>Metrics scrape</span>
+      <span>Select any box to see its configuration</span>
+    </div>
+  </section>
+
+  <section class="leader-panel" aria-label="Leadership">
+    <div class="panel">
+      <h2 id="lead-h">Change leader</h2>
+      <p class="lead" id="lead-current">Loading cluster state…</p>
+      <fieldset>
+        <legend>New leader</legend>
+        <div class="choices" id="cand"></div>
+      </fieldset>
+      <fieldset>
+        <legend>Method</legend>
+        <div class="choices">
+          <label class="choice"><input type="radio" name="method" value="switchover" checked><span><b>Switchover</b><small>Planned, no data loss</small></span></label>
+          <label class="choice"><input type="radio" name="method" value="failover"><span><b>Failover</b><small>Emergency, leader is down</small></span></label>
+        </div>
+        <p class="method-note" id="method-note"></p>
+      </fieldset>
+      <div id="lead-action"></div>
+      <p class="outcome" id="lead-outcome" aria-live="polite"></p>
+    </div>
+    <div class="panel">
+      <h2>Leader history</h2>
+      <p class="lead">Every promotion starts a new PostgreSQL timeline.</p>
+      <div id="history"></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="svc-h">
+    <h2 id="svc-h">Services</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Service</th><th>Status</th><th>What it's doing</th><th>Image</th><th>Open</th><th>Configuration</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>Refreshes every 5 seconds. Status comes from each service's own health API, probed from inside the Docker network.</footer>
+</div>
+
+<dialog id="dlg" aria-labelledby="dlg-title">
+  <div class="dlg-head">
+    <div><h3 id="dlg-title"></h3><p id="dlg-about"></p></div>
+    <button class="btn" type="button" id="dlg-close">Close</button>
+  </div>
+  <div class="dlg-tools">
+    <div class="tabs" role="tablist" id="dlg-tabs"></div>
+    <label><input type="checkbox" id="reveal"> Show secrets</label>
+  </div>
+  <pre class="code" id="dlg-code" tabindex="0"></pre>
+  <div class="dlg-foot"><span id="dlg-path"></span><button class="btn" type="button" id="copy">Copy</button></div>
+</dialog>
+
+<script>
+"use strict";
+const SVGNS = "http://www.w3.org/2000/svg";
+const ORDER = ["haproxy","patroni1","patroni2","patroni3","pg-exporter1","pg-exporter2","pg-exporter3",
+               "etcd1","etcd2","etcd3","prometheus","grafana","landing"];
+const COLORS = { up: "var(--ok)", degraded: "var(--warn)", down: "var(--down)" };
+let last = null, lastAt = 0;
+
+/* ---- tiny SVG helper ---- */
+function el(tag, attrs = {}, parent) {
+  const n = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (parent) parent.appendChild(n);
+  return n;
+}
+function text(parent, x, y, str, cls, anchor = "middle") {
+  const t = el("text", { x, y, class: cls, "text-anchor": anchor }, parent);
+  t.textContent = str;
+  return t;
+}
+
+/* ---- layout (viewBox 1160 x 640) ---- */
+const COL = [255, 475, 695];
+const L = {
+  apps:  { x: 475, y: 52,  w: 230, h: 44 },
+  haproxy: { x: 475, y: 158, w: 390, h: 68 },
+  pg:    COL.map(x => ({ x, y: 304, w: 212, h: 136 })),      /* container frame */
+  tap:   COL.map(x => ({ x, y: 391, w: 168, h: 24 })),       /* pg-exporter chip, its own container */
+  etcd:  COL.map(x => ({ x, y: 548, w: 170, h: 60 })),
+  grafana: { x: 1015, y: 158, w: 210, h: 60 },
+  prometheus: { x: 1015, y: 318, w: 210, h: 68 },
+};
+const yTop = b => b.y - b.h / 2, yBot = b => b.y + b.h / 2;
+
+function node(svg, name, box, title, sub, status, extra = {}) {
+  const g = el("g", { class: "node", tabindex: 0, role: "button", "data-svc": name, "aria-label": `${title}: ${status || "unknown"}. Open configuration` }, svg);
+  el("rect", { class: "body", x: box.x - box.w / 2, y: yTop(box), width: box.w, height: box.h, rx: 6,
+               stroke: COLORS[status] || "var(--rule)" }, g);
+  if (extra.leader) {
+    el("rect", { x: box.x - box.w / 2, y: yTop(box) - 22, width: 70, height: 22, rx: 3, fill: "var(--leader)" }, g);
+    const t = text(g, box.x - box.w / 2 + 35, yTop(box) - 6.5, "Leader", "port-pill");
+    t.setAttribute("fill", "#fff");
+  }
+  el("circle", { cx: box.x - box.w / 2 + 16, cy: yTop(box) + 21, r: 5, fill: COLORS[status] || "var(--rule)" }, g);
+  text(g, box.x - box.w / 2 + 28, yTop(box) + 26, title, "title", "start");
+  if (sub) text(g, box.x - box.w / 2 + 16, yTop(box) + 46, sub, "sub", "start");
+  if (extra.sub2) text(g, box.x - box.w / 2 + 16, yTop(box) + 64, extra.sub2, "sub", "start");
+  return g;
+}
+
+/* ---- PostgreSQL node: container frame > PostgreSQL card > Patroni agent row ---- */
+const fmtBytes = b => b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB` : `${Math.round(b / 1048576)} MB`;
+function fmtUptime(iso) {
+  if (!iso) return "";
+  const ms = Date.now() - new Date(iso.replace(" ", "T")).getTime();
+  if (!(ms > 0)) return "";
+  const m = Math.floor(ms / 60000), h = Math.floor(m / 60), d = Math.floor(h / 24);
+  return d >= 2 ? `up ${d} days` : h >= 1 ? `up ${h} h ${m % 60} min` : `up ${m} min`;
+}
+function drawPgNode(svg, n, i, S, isLeader) {
+  const s = S[n] || {}, pg = s.pg || {}, ex = S["pg-exporter" + (i + 1)] || {};
+  const f = L.pg[i], x0 = f.x - f.w / 2, y0 = yTop(f);
+
+  /* container frame: the Docker container named patroniN */
+  const g = el("g", { class: "node", tabindex: 0, role: "button", "data-svc": n,
+                      "aria-label": `Container ${n}: PostgreSQL ${pg.status || "unknown"}, Patroni agent ${pg.agent || "unknown"}. Open configuration` }, svg);
+  el("rect", { class: "body frame", x: x0, y: y0, width: f.w, height: f.h, rx: 8 }, g);
+  text(g, x0 + 10, y0 + 15, `container ${n}`, "container-label", "start");
+  if (isLeader) {
+    el("rect", { x: x0 + f.w - 74, y: y0 + 4, width: 66, height: 16, rx: 3, fill: "var(--leader)" }, g);
+    const t = text(g, x0 + f.w - 41, y0 + 15.5, "Primary", "pill-text");
+    t.setAttribute("fill", "#fff");
+  }
+
+  /* PostgreSQL card: the main subject */
+  const cx = x0 + 7, cy = y0 + 23, cw = f.w - 14, ch = 84;
+  el("rect", { class: "pg-card", x: cx, y: cy, width: cw, height: ch, rx: 5, stroke: COLORS[pg.status] || "var(--rule)" }, g);
+  el("circle", { cx: cx + 13, cy: cy + 16, r: 5, fill: COLORS[pg.status] || "var(--rule)" }, g);
+  text(g, cx + 24, cy + 21, `PostgreSQL ${pg.version || ""}`.trim(), "title", "start");
+  let l1;
+  if (pg.status === "down") l1 = pg.state === "unreachable" ? "Not reachable" : `Stopped (${pg.state})`;
+  else if (s.role === "leader") l1 = `Primary, read-write, timeline ${s.timeline}`;
+  else l1 = `Replica, ${s.state || pg.state}, ${fmtLag(s.lag)}`;
+  text(g, cx + 12, cy + 40, l1, "sub", "start");
+  if (pg.connections !== undefined) {
+    text(g, cx + 12, cy + 57, `${pg.connections} of ${pg.max_connections} connections, ${pg.active} active`, "sub", "start");
+    text(g, cx + 12, cy + 74, `${pg.databases} databases, ${fmtBytes(pg.size_bytes)}, ${fmtUptime(pg.started)}`, "sub", "start");
+  } else {
+    text(g, cx + 12, cy + 57, fmtUptime(pg.started) || "Stats unavailable", "sub", "start");
+  }
+
+  /* Patroni agent row: the HA manager inside the same container */
+  const ay = cy + ch + 15;
+  el("circle", { cx: cx + 13, cy: ay - 4, r: 4, fill: COLORS[pg.agent === "up" ? "up" : "down"] }, g);
+  text(g, cx + 24, ay, `Patroni ${pg.agent_version || ""} agent, API :8008`.replace("  ", " "), "agent", "start");
+
+  /* exporter: a separate container that reads PostgreSQL's stats */
+  const t = L.tap[i];
+  el("line", { x1: t.x, y1: yBot(f), x2: t.x, y2: yTop(t), class: "edge scrape" }, svg);
+  const tap = el("g", { class: "node", tabindex: 0, role: "button", "data-svc": "pg-exporter" + (i + 1),
+                        "aria-label": `pg-exporter${i + 1}: ${ex.status}. Open configuration` }, svg);
+  el("rect", { class: "body chip", x: t.x - t.w / 2, y: yTop(t), width: t.w, height: t.h, rx: 12,
+               stroke: COLORS[ex.status] || "var(--rule)" }, tap);
+  el("circle", { cx: t.x - t.w / 2 + 14, cy: t.y, r: 4, fill: COLORS[ex.status] || "var(--rule)" }, tap);
+  text(tap, t.x - t.w / 2 + 24, t.y + 4, `pg-exporter${i + 1} :${9187 + i}`, "tap", "start");
+}
+
+/* one delegated listener survives the 5 s re-render */
+const topo = document.getElementById("topo");
+const svcFrom = e => { const g = e.target.closest("[data-svc]"); return g && g.dataset.svc; };
+/* If a 5 s re-render swaps the node between mouse-down and mouse-up, the browser
+   retargets the click to the <svg>; fall back to what was under the pointer at mouse-down. */
+let downSvc = null, downAt = 0;
+topo.addEventListener("pointerdown", e => { downSvc = svcFrom(e); downAt = Date.now(); });
+topo.addEventListener("click", e => {
+  const n = svcFrom(e) || (Date.now() - downAt < 1000 ? downSvc : null);
+  downSvc = null;
+  if (n) openConfig(n);
+});
+topo.addEventListener("keydown", e => {
+  const n = svcFrom(e);
+  if (n && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openConfig(n); }
+});
+
+let lastKey = "";
+function render(data) {
+  const S = data.services, svg = topo;
+  const key = JSON.stringify(S);
+  if (key === lastKey) return;          /* nothing changed: keep DOM (and focus) stable */
+  lastKey = key;
+  const focused = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.svc : null;
+  svg.replaceChildren();
+
+  /* lanes */
+  [["Applications", 52], ["Routing", 158], ["PostgreSQL", 304], ["Consensus", 548]].forEach(([label, y]) => {
+    text(svg, 22, y + 4, label, "lane-label", "start");
+  });
+  [105, 206, 470].forEach(y => el("line", { x1: 20, x2: 830, y1: y, y2: y, class: "lane-rule" }, svg));
+  el("line", { x1: 860, x2: 860, y1: 24, y2: 616, class: "lane-rule" }, svg);
+  text(svg, 1015, 52 + 4, "Monitoring", "lane-label");
+
+  const pgNames = ["patroni1", "patroni2", "patroni3"];
+  const leader = pgNames.find(n => S[n] && S[n].role === "leader");
+  const hb = (S.haproxy && S.haproxy.backends) || { write: {}, read: {} };
+
+  /* edges first so boxes sit on top */
+  el("line", { x1: L.apps.x, y1: yBot(L.apps), x2: L.haproxy.x, y2: yTop(L.haproxy), class: "edge dcs" }, svg);
+  pgNames.forEach((n, i) => {
+    const p = L.pg[i];
+    const isW = hb.write[n] === "UP", isR = hb.read[n] === "UP";
+    const sx = L.haproxy.x + (i - 1) * 90;
+    el("path", { d: `M${sx},${yBot(L.haproxy)} C${sx},${yBot(L.haproxy) + 40} ${p.x},${yTop(p) - 50} ${p.x},${yTop(p)}`,
+                 class: "edge" + (isW ? " write" : isR ? " read" : "") }, svg);
+    /* to etcd quorum */
+    el("line", { x1: p.x, y1: yBot(L.tap[i]), x2: L.etcd[i].x, y2: yTop(L.etcd[i]) - 14,
+                 class: "edge" + (S[n] && S[n].status !== "down" ? " dcs" : "") }, svg);
+  });
+  text(svg, L.haproxy.x + L.haproxy.w / 2 + 10, L.haproxy.y + 4, "health checks on :8008", "edge-label", "start");
+
+  /* replication arcs leader -> replicas */
+  if (leader) {
+    const li = pgNames.indexOf(leader);
+    pgNames.forEach((n, i) => {
+      if (i === li) return;
+      /* U-shaped: drops straight down through the gap between exporter chips, runs below them */
+      const a = L.pg[li], b = L.pg[i], drop = Math.abs(i - li) === 2 ? 88 : 64;
+      const streaming = S[n] && S[n].state === "streaming";
+      const off = a.w / 2 - 14, x1 = a.x + (i > li ? off : -off), x2 = b.x + (i > li ? -off : off), y = yBot(a);
+      el("path", { d: `M${x1},${y} C${x1},${y + drop} ${x2},${y + drop} ${x2},${y}`,
+                   class: "edge repl" + (streaming ? "" : " stalled") }, svg);
+    });
+  }
+
+  /* etcd quorum frame + peers */
+  el("rect", { x: 150, y: yTop(L.etcd[0]) - 14, width: 650, height: L.etcd[0].h + 28, rx: 8, class: "quorum" }, svg);
+  const quorumUp = ["etcd1", "etcd2", "etcd3"].filter(n => S[n] && S[n].status === "up").length;
+  text(svg, 790, yBot(L.etcd[0]) + 30, `Raft quorum: ${quorumUp} of 3 members healthy`, "edge-label", "end");
+  [[0, 1], [1, 2]].forEach(([a, b]) => el("line", { x1: L.etcd[a].x + 85, y1: L.etcd[a].y, x2: L.etcd[b].x - 85, y2: L.etcd[b].y, class: "edge dcs" }, svg));
+
+  /* monitoring edges */
+  el("line", { x1: L.grafana.x, y1: yBot(L.grafana), x2: L.prometheus.x, y2: yTop(L.prometheus), class: "edge dcs" }, svg);
+  el("path", { d: `M${L.prometheus.x - 105},${L.prometheus.y} L${800},${L.prometheus.y}`, class: "edge scrape" }, svg);
+  el("path", { d: `M${L.prometheus.x},${yBot(L.prometheus)} L${L.prometheus.x},${L.etcd[2].y} L${800},${L.etcd[2].y}`, class: "edge scrape" }, svg);
+  text(svg, 832, L.prometheus.y - 8, "scrapes", "edge-label", "start");
+
+  /* boxes */
+  const appsG = el("g", {}, svg);
+  el("rect", { x: L.apps.x - L.apps.w / 2, y: yTop(L.apps), width: L.apps.w, height: L.apps.h, rx: 22,
+               fill: "none", stroke: "var(--rule)", "stroke-dasharray": "3 3" }, appsG);
+  text(appsG, L.apps.x, L.apps.y + 5, "Your applications (psql, apps)", "sub");
+
+  const h = S.haproxy || {};
+  node(svg, "haproxy", L.haproxy, "HAProxy", h.summary, h.status, { sub2: "localhost:5000 writes, localhost:5001 reads" });
+
+  pgNames.forEach((n, i) => drawPgNode(svg, n, i, S, n === leader));
+
+  ["etcd1", "etcd2", "etcd3"].forEach((n, i) => {
+    const s = S[n] || {};
+    node(svg, n, L.etcd[i], n, s.role ? (s.role === "raft leader" ? "Raft leader" : "Follower") : s.summary, s.status);
+  });
+
+  const g = S.grafana || {}, p = S.prometheus || {};
+  node(svg, "grafana", L.grafana, "Grafana", g.version ? `v${g.version}, localhost:3000` : g.summary, g.status);
+  node(svg, "prometheus", L.prometheus, "Prometheus", p.summary, p.status, { sub2: "localhost:9091" });
+
+  renderTable(S);
+  renderVerdict(S, leader);
+  if (focused) { const f = svg.querySelector(`[data-svc="${focused}"]`); if (f) f.focus(); }
+}
+
+function renderVerdict(S, leader) {
+  const all = Object.values(S), up = all.filter(s => s.status === "up").length;
+  const replicas = ["patroni1", "patroni2", "patroni3"].filter(n => S[n] && S[n].role !== "leader" && S[n].state === "streaming").length;
+  const etcd = ["etcd1", "etcd2", "etcd3"].filter(n => S[n] && S[n].status === "up").length;
+  const v = document.getElementById("verdict");
+  if (!leader) {
+    v.innerHTML = `<strong>No leader right now.</strong> Writes are unavailable until Patroni elects one. etcd has ${etcd} of 3 members healthy.`;
+    return;
+  }
+  v.innerHTML = `<strong>PostgreSQL in ${leader} is the primary</strong>, with ${replicas} of 2 replicas streaming. ` +
+    `etcd quorum ${etcd} of 3, and ${up} of ${all.length} services healthy.`;
+}
+
+function renderTable(S) {
+  const rows = document.getElementById("rows");
+  rows.replaceChildren();
+  ORDER.forEach(name => {
+    const s = S[name]; if (!s) return;
+    const tr = document.createElement("tr");
+    const links = (s.ports || []).map(p => {
+      if ([5432, 5000, 5001].includes(p.container)) return `<span>localhost:${p.host}</span>`;
+      const path = { 9187: "/metrics", 8008: "/patroni", 2379: "/health" }[p.container] || "/";
+      return `<a href="http://localhost:${p.host}${path}" target="_blank" rel="noopener">localhost:${p.host}</a>`;
+    }).join("");
+    tr.innerHTML = `<td class="name"></td>
+      <td><span class="state ${s.status}"><i class="dot ${s.status}"></i>${{ up: "Healthy", degraded: "Degraded", down: "Down" }[s.status] || s.status}</span></td>
+      <td class="sum"></td><td class="img"></td><td class="links">${links}</td>
+      <td><button class="btn" type="button">View config</button></td>`;
+    tr.querySelector(".name").textContent = name;
+    tr.querySelector(".sum").textContent = s.summary || "";
+    tr.querySelector(".img").textContent = s.image || "";
+    tr.querySelector("button").addEventListener("click", () => openConfig(name));
+    rows.appendChild(tr);
+  });
+}
+
+async function refresh() {
+  try {
+    const r = await fetch("/api/status", { cache: "no-store" });
+    last = await r.json(); lastAt = Date.now();
+    render(last);
+    if (!confirming) renderLeadership(last);   /* keep an open confirmation stable */
+  } catch (e) {
+    document.getElementById("verdict").innerHTML = `<span class="error">This page can't reach its own backend. Check that the landing container is running: docker compose -p patroni-ha ps landing</span>`;
+  }
+  tick();
+}
+function tick() {
+  const c = document.getElementById("checked");
+  if (!lastAt) return;
+  const s = Math.round((Date.now() - lastAt) / 1000);
+  c.textContent = s < 2 ? "Checked just now" : `Checked ${s} s ago`;
+}
+document.getElementById("refresh").addEventListener("click", refresh);
+setInterval(refresh, 5000); setInterval(tick, 1000);
+refresh();
+
+/* ---- change leader ---- */
+const NOTES = {
+  switchover: "The current leader finishes its work, hands over, and rejoins as a replica. No committed data is lost. Patroni refuses if the leader or the new leader isn't healthy.",
+  failover: "Promotes the replica right away, even if the leader is down or stuck. Anything the replica hadn't received yet is lost. Use it when a switchover isn't possible.",
+};
+let pick = null, busy = false, confirming = false;
+const fmtLag = b => b === null || b === undefined ? "lag unknown" : b < 1024 ? `lag ${b} B` : `lag ${(b / 1048576).toFixed(1)} MB`;
+const method = () => document.querySelector('input[name="method"]:checked').value;
+document.querySelectorAll('input[name="method"]').forEach(r => r.addEventListener("change", () => { confirming = false; renderLeadership(last); }));
+
+let leadKey = "";
+function renderLeadership(data) {
+  if (!data || busy) return;
+  const S = data.services, pg = ["patroni1", "patroni2", "patroni3"];
+  const leader = pg.find(n => S[n] && S[n].role === "leader");
+  const tl = leader && S[leader].timeline;
+  document.getElementById("lead-current").textContent = leader
+    ? `PostgreSQL in ${leader} is the primary (Patroni leader) on timeline ${tl}. Writes on port 5000 go there.`
+    : "There is no leader right now, so writes are failing. Fail over to a replica to restore them.";
+
+  if (!leader && method() === "switchover") document.querySelector('input[value="failover"]').checked = true;
+  document.querySelector('input[value="switchover"]').disabled = !leader;
+  const m = method();
+  document.getElementById("method-note").textContent = NOTES[m];
+
+  const replicas = pg.filter(n => n !== leader);
+  const eligible = n => S[n] && S[n].status !== "down" && (m === "failover" || S[n].state === "streaming");
+  if (!replicas.includes(pick) || !eligible(pick)) pick = replicas.find(eligible) || null;
+  /* rebuild only when something visible changed, so buttons aren't swapped mid-click */
+  const key = JSON.stringify([pg.map(n => S[n] && [S[n].role, S[n].state, S[n].status, S[n].lag, S[n].timeline]), pick, m, confirming]);
+  if (key === leadKey) return;
+  leadKey = key;
+  const cand = document.getElementById("cand");
+  cand.replaceChildren();
+  replicas.forEach(n => {
+    const s = S[n] || {}, l = document.createElement("label");
+    l.className = "choice";
+    l.innerHTML = `<input type="radio" name="cand"><span><b></b><small></small></span>`;
+    const inp = l.querySelector("input");
+    inp.value = n; inp.checked = n === pick; inp.disabled = !eligible(n);
+    l.querySelector("b").textContent = n;
+    l.querySelector("small").textContent = s.status === "down" ? "down" : `${s.state || s.status}, ${fmtLag(s.lag)}`;
+    inp.addEventListener("change", () => { pick = n; confirming = false; renderLeadership(last); });
+    cand.appendChild(l);
+  });
+  renderAction(leader);
+}
+
+function renderAction(leader) {
+  const box = document.getElementById("lead-action"), m = method();
+  box.replaceChildren();
+  if (!pick) {
+    box.innerHTML = `<p class="method-note">No replica can be promoted with this method right now.</p>`;
+    return;
+  }
+  const verb = m === "switchover" ? "Switch over" : "Fail over";
+  if (!confirming) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "btn btn-primary" + (m === "failover" ? " danger" : "");
+    b.textContent = `${verb} to ${pick}`;
+    b.addEventListener("click", () => { confirming = true; renderAction(leader); document.getElementById("confirm-go").focus(); });
+    box.appendChild(b);
+    return;
+  }
+  const div = document.createElement("div");
+  div.className = "confirm";
+  const what = m === "switchover"
+    ? `Writes move from ${leader} to ${pick}. Open connections to ${leader} are dropped and clients reconnect through port 5000 within a few seconds.`
+    : `${pick} is promoted immediately${leader ? ` and ${leader} is demoted` : ""}. Transactions ${pick} hadn't received yet are lost.`;
+  div.innerHTML = `<p></p><div class="row"><button type="button" class="btn btn-primary${m === "failover" ? " danger" : ""}" id="confirm-go"></button><button type="button" class="btn" id="confirm-cancel">Cancel</button></div>`;
+  div.querySelector("p").textContent = what;
+  div.querySelector("#confirm-go").textContent = `Confirm ${m}`;
+  div.querySelector("#confirm-go").addEventListener("click", () => runChange(m, pick, leader));
+  div.querySelector("#confirm-cancel").addEventListener("click", () => { confirming = false; renderAction(leader); });
+  box.appendChild(div);
+}
+
+async function runChange(m, target, from) {
+  busy = true; confirming = false;
+  const out = document.getElementById("lead-outcome"), started = Date.now();
+  const box = document.getElementById("lead-action");
+  box.querySelectorAll("button").forEach(b => b.disabled = true);
+  out.className = "outcome busy";
+  out.textContent = m === "switchover" ? `Switching over to ${target}…` : `Failing over to ${target}…`;
+  let res;
+  try {
+    const r = await fetch(`/api/${m}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ candidate: target }) });
+    res = await r.json();
+  } catch (e) {
+    res = { ok: false, message: `The landing page backend didn't answer: ${e.message}` };
+  }
+  if (!res.ok) {
+    busy = false;
+    out.className = "outcome fail";
+    out.textContent = `${m === "switchover" ? "Switchover" : "Failover"} didn't happen. Patroni said: ${res.message}`;
+    renderLeadership(last);
+    return;
+  }
+  /* Patroni accepted; wait until the new leader shows up and HAProxy routes to it */
+  out.textContent = `Patroni accepted. Waiting for ${target} to take over…`;
+  for (let i = 0; i < 30; i++) {
+    await new Promise(r => setTimeout(r, 1000));
+    try {
+      const st = await (await fetch("/api/status", { cache: "no-store" })).json();
+      const s = st.services[target], hb = st.services.haproxy.backends || { write: {} };
+      if (s && s.role === "leader" && hb.write[target] === "UP") {
+        last = st; lastAt = Date.now();
+        busy = false;
+        render(st); renderLeadership(st); loadHistory();
+        out.className = "outcome ok";
+        out.textContent = `Done. ${target} is the leader on timeline ${s.timeline} and port 5000 routes to it (took ${Math.round((Date.now() - started) / 1000)} s).`;
+        return;
+      }
+    } catch { /* keep waiting */ }
+  }
+  busy = false;
+  out.className = "outcome fail";
+  out.textContent = `Patroni accepted the ${m}, but ${target} isn't leading after 30 s. Check the diagram and docker compose -p patroni-ha logs ${target}.`;
+  refresh();
+}
+
+async function loadHistory() {
+  const box = document.getElementById("history");
+  let rows;
+  try { rows = await (await fetch("/api/history", { cache: "no-store" })).json(); }
+  catch { box.innerHTML = `<p class="history-empty">Couldn't load history from Patroni.</p>`; return; }
+  if (!rows.length) { box.innerHTML = `<p class="history-empty">No leader changes yet. The first leader has held the lock since the cluster was created.</p>`; return; }
+  const t = document.createElement("table");
+  t.className = "history";
+  t.innerHTML = `<thead><tr><th>When</th><th>New leader</th><th>Timeline</th></tr></thead><tbody></tbody>`;
+  rows.slice(0, 8).forEach(r => {
+    const tr = document.createElement("tr"), d = r.at ? new Date(r.at) : null;
+    tr.innerHTML = "<td></td><td></td><td></td>";
+    tr.children[0].textContent = d ? d.toLocaleString([], { dateStyle: "medium", timeStyle: "medium" }) : "unknown";
+    tr.children[1].textContent = r.new_leader || "unknown";
+    tr.children[2].textContent = `${r.timeline} to ${r.timeline + 1}`;
+    t.tBodies[0].appendChild(tr);
+  });
+  box.replaceChildren(t);
+}
+loadHistory(); setInterval(loadHistory, 30000);
+
+/* ---- config dialog ---- */
+const dlg = document.getElementById("dlg");
+let cfg = null, cfgName = null, sel = 0, opener = null;
+document.getElementById("dlg-close").addEventListener("click", () => dlg.close());
+dlg.addEventListener("close", () => { if (opener) opener.focus(); });
+document.getElementById("reveal").addEventListener("change", () => cfgName && loadConfig(cfgName));
+document.getElementById("copy").addEventListener("click", async e => {
+  try { await navigator.clipboard.writeText(document.getElementById("dlg-code").textContent); e.target.textContent = "Copied"; }
+  catch { e.target.textContent = "Select and copy manually"; }
+  setTimeout(() => e.target.textContent = "Copy", 1500);
+});
+
+function openConfig(name) {
+  opener = document.activeElement;
+  cfgName = name; sel = 0;
+  document.getElementById("dlg-title").textContent = `${name} configuration`;
+  document.getElementById("dlg-about").textContent = "";
+  document.getElementById("dlg-code").textContent = "Loading…";
+  document.getElementById("dlg-tabs").replaceChildren();
+  if (!dlg.open) dlg.showModal();
+  loadConfig(name);
+}
+async function loadConfig(name) {
+  const reveal = document.getElementById("reveal").checked ? "?reveal=1" : "";
+  try {
+    const r = await fetch(`/api/config/${encodeURIComponent(name)}${reveal}`, { cache: "no-store" });
+    cfg = await r.json();
+    if (!r.ok) throw new Error(cfg.error);
+  } catch (e) {
+    document.getElementById("dlg-code").textContent = `Couldn't load the configuration: ${e.message}`;
+    return;
+  }
+  document.getElementById("dlg-about").textContent = cfg.about;
+  const items = cfg.sections.flatMap(s => s.items.map(it => ({ ...it, group: s.group })));
+  const tabs = document.getElementById("dlg-tabs");
+  tabs.replaceChildren();
+  items.forEach((it, i) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "tab"; b.setAttribute("role", "tab");
+    b.setAttribute("aria-selected", i === sel ? "true" : "false");
+    b.innerHTML = `<small></small><span></span>`;
+    b.querySelector("small").textContent = it.group;
+    b.querySelector("span").textContent = it.name.split("/").pop();
+    b.addEventListener("click", () => { sel = i; showItem(items); });
+    tabs.appendChild(b);
+  });
+  showItem(items);
+}
+function showItem(items) {
+  const it = items[Math.min(sel, items.length - 1)];
+  document.querySelectorAll("#dlg-tabs .tab").forEach((b, i) => b.setAttribute("aria-selected", i === sel ? "true" : "false"));
+  document.getElementById("dlg-code").textContent = it.content;
+  document.getElementById("dlg-path").textContent = `${it.group}: ${it.name}`;
+}
+</script>
+</body>
+</html>

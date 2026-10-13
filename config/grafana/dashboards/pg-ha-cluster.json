@@ -1,0 +1,1223 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "type": "row",
+      "title": "CLUSTER OVERVIEW",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "title": "Patroni Cluster Info",
+      "type": "table",
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "expr": "patroni_version",
+          "refId": "A",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "All Patroni node metadata"
+    },
+    {
+      "title": "patroni1",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 6
+      },
+      "targets": [
+        {
+          "expr": "patroni_postgres_running{instance=~\"patroni1.*\"}",
+          "refId": "A",
+          "legendFormat": "patroni1"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "RUNNING",
+                  "color": "green"
+                },
+                "0": {
+                  "text": "STOPPED",
+                  "color": "red"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "title": "patroni2",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 6
+      },
+      "targets": [
+        {
+          "expr": "patroni_postgres_running{instance=~\"patroni2.*\"}",
+          "refId": "A",
+          "legendFormat": "patroni2"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "RUNNING",
+                  "color": "green"
+                },
+                "0": {
+                  "text": "STOPPED",
+                  "color": "red"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "title": "patroni3",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 6
+      },
+      "targets": [
+        {
+          "expr": "patroni_postgres_running{instance=~\"patroni3.*\"}",
+          "refId": "A",
+          "legendFormat": "patroni3"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "RUNNING",
+                  "color": "green"
+                },
+                "0": {
+                  "text": "STOPPED",
+                  "color": "red"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "title": "Role",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 6
+      },
+      "targets": [
+        {
+          "expr": "patroni_primary",
+          "refId": "A",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "PRIMARY",
+                  "color": "green"
+                },
+                "0": {
+                  "text": "REPLICA",
+                  "color": "blue"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "title": "Timeline",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 6
+      },
+      "targets": [
+        {
+          "expr": "patroni_postgres_timeline",
+          "refId": "A",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "title": "PG Up",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 6
+      },
+      "targets": [
+        {
+          "expr": "pg_up",
+          "refId": "A",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "UP",
+                  "color": "green"
+                },
+                "0": {
+                  "text": "DOWN",
+                  "color": "red"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "title": "REPLICATION",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 10
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "title": "WAL Position (Patroni)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 11
+      },
+      "targets": [
+        {
+          "expr": "patroni_xlog_location",
+          "refId": "A",
+          "legendFormat": "primary {{instance}}"
+        },
+        {
+          "expr": "patroni_xlog_received_location",
+          "refId": "B",
+          "legendFormat": "received {{instance}}"
+        },
+        {
+          "expr": "patroni_xlog_replayed_location",
+          "refId": "C",
+          "legendFormat": "replayed {{instance}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "description": "WAL byte positions from Patroni REST API"
+    },
+    {
+      "title": "Replication Lag (default exporter)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 11
+      },
+      "targets": [
+        {
+          "expr": "pg_replication_lag_seconds",
+          "refId": "A",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "description": "Replication lag from default pg_exporter (replicas only)"
+    },
+    {
+      "type": "row",
+      "title": "DATABASE ACTIVITY",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "title": "Active Connections by State",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 19
+      },
+      "targets": [
+        {
+          "expr": "pg_stat_activity_count{datname!=\"\"}",
+          "refId": "A",
+          "legendFormat": "{{instance}} {{datname}} {{state}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Default exporter: pg_stat_activity_count"
+    },
+    {
+      "title": "Transactions per Second",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 19
+      },
+      "targets": [
+        {
+          "expr": "rate(pg_stat_database_xact_commit{datname!=\"\"}[5m])",
+          "refId": "A",
+          "legendFormat": "commit {{instance}} {{datname}}"
+        },
+        {
+          "expr": "rate(pg_stat_database_xact_rollback{datname!=\"\"}[5m])",
+          "refId": "B",
+          "legendFormat": "rollback {{instance}} {{datname}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "title": "Active Backends per DB",
+      "type": "gauge",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 19
+      },
+      "targets": [
+        {
+          "expr": "pg_stat_database_numbackends{datname!=\"\"}",
+          "refId": "A",
+          "legendFormat": "{{instance}} {{datname}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "red",
+                "value": 150
+              }
+            ]
+          },
+          "min": 0,
+          "max": 200
+        },
+        "overrides": []
+      }
+    },
+    {
+      "title": "Rows Inserted/Updated/Deleted per Sec",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 26
+      },
+      "targets": [
+        {
+          "expr": "rate(pg_stat_database_tup_inserted{datname!=\"\"}[5m])",
+          "refId": "A",
+          "legendFormat": "ins {{instance}} {{datname}}"
+        },
+        {
+          "expr": "rate(pg_stat_database_tup_updated{datname!=\"\"}[5m])",
+          "refId": "B",
+          "legendFormat": "upd {{instance}} {{datname}}"
+        },
+        {
+          "expr": "rate(pg_stat_database_tup_deleted{datname!=\"\"}[5m])",
+          "refId": "C",
+          "legendFormat": "del {{instance}} {{datname}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "title": "Rows Fetched / Returned per Sec",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 26
+      },
+      "targets": [
+        {
+          "expr": "rate(pg_stat_database_tup_fetched{datname!=\"\"}[5m])",
+          "refId": "A",
+          "legendFormat": "fetched {{instance}} {{datname}}"
+        },
+        {
+          "expr": "rate(pg_stat_database_tup_returned{datname!=\"\"}[5m])",
+          "refId": "B",
+          "legendFormat": "returned {{instance}} {{datname}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "title": "PERFORMANCE",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 33
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "title": "Cache Hit Ratio per DB (%)",
+      "type": "gauge",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 34
+      },
+      "targets": [
+        {
+          "expr": "(pg_stat_database_blks_hit{datname!=\"\"} / (pg_stat_database_blks_hit{datname!=\"\"} + pg_stat_database_blks_read{datname!=\"\"} + 0.001)) * 100",
+          "refId": "A",
+          "legendFormat": "{{instance}} {{datname}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 90
+              },
+              {
+                "color": "green",
+                "value": 99
+              }
+            ]
+          },
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "description": "Buffer cache hit ratio. Should be >99% in production."
+    },
+    {
+      "title": "Block Hits vs Reads Rate",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 34
+      },
+      "targets": [
+        {
+          "expr": "rate(pg_stat_database_blks_hit{datname!=\"\"}[5m])",
+          "refId": "A",
+          "legendFormat": "hits {{instance}} {{datname}}"
+        },
+        {
+          "expr": "rate(pg_stat_database_blks_read{datname!=\"\"}[5m])",
+          "refId": "B",
+          "legendFormat": "reads {{instance}} {{datname}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "description": "Shared buffer cache hits vs disk reads"
+    },
+    {
+      "title": "Temp File Bytes Rate",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 34
+      },
+      "targets": [
+        {
+          "expr": "rate(pg_stat_database_temp_bytes{datname!=\"\"}[5m])",
+          "refId": "A",
+          "legendFormat": "{{instance}} {{datname}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "description": "Temp file creation rate. High = work_mem too low."
+    },
+    {
+      "title": "Checkpoints",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 41
+      },
+      "targets": [
+        {
+          "expr": "rate(pg_stat_checkpointer_num_timed_total[5m])",
+          "refId": "A",
+          "legendFormat": "timed {{instance}}"
+        },
+        {
+          "expr": "rate(pg_stat_checkpointer_num_requested_total[5m])",
+          "refId": "B",
+          "legendFormat": "requested {{instance}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "description": "Timed = normal scheduled. Requested = forced (e.g. too much WAL)."
+    },
+    {
+      "title": "Buffer Writes by Source",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 41
+      },
+      "targets": [
+        {
+          "expr": "rate(pg_stat_checkpointer_buffers_written_total[5m])",
+          "refId": "A",
+          "legendFormat": "checkpoint {{instance}}"
+        },
+        {
+          "expr": "rate(pg_stat_bgwriter_buffers_clean_total[5m])",
+          "refId": "B",
+          "legendFormat": "bgwriter {{instance}}"
+        },
+        {
+          "expr": "rate(pg_stat_bgwriter_buffers_alloc_total[5m])",
+          "refId": "C",
+          "legendFormat": "allocated {{instance}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "description": "Buffers written by checkpointer vs bgwriter, and buffers allocated (PG17+ moved backend writes to pg_stat_io)."
+    },
+    {
+      "title": "Checkpoint Write / Sync Time",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 41
+      },
+      "targets": [
+        {
+          "expr": "rate(pg_stat_checkpointer_write_time_total[5m])",
+          "refId": "A",
+          "legendFormat": "write {{instance}}"
+        },
+        {
+          "expr": "rate(pg_stat_checkpointer_sync_time_total[5m])",
+          "refId": "B",
+          "legendFormat": "sync {{instance}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "description": "Milliseconds per second spent writing/syncing checkpoint files. Sustained high sync time = slow storage."
+    },
+    {
+      "type": "row",
+      "title": "LOCKS AND CONFLICTS",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 48
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "title": "Locks by Mode",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 49
+      },
+      "targets": [
+        {
+          "expr": "pg_locks_count",
+          "refId": "A",
+          "legendFormat": "{{instance}} {{datname}} {{mode}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Default exporter: pg_locks_count"
+    },
+    {
+      "title": "Conflicts and Deadlocks Rate",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 49
+      },
+      "targets": [
+        {
+          "expr": "rate(pg_stat_database_conflicts{datname!=\"\"}[5m])",
+          "refId": "A",
+          "legendFormat": "conflicts {{instance}} {{datname}}"
+        },
+        {
+          "expr": "rate(pg_stat_database_deadlocks{datname!=\"\"}[5m])",
+          "refId": "B",
+          "legendFormat": "deadlocks {{instance}} {{datname}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "title": "DATABASE SIZE",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 56
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "title": "Database Size (trend)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 57
+      },
+      "targets": [
+        {
+          "expr": "pg_database_size_bytes{datname!~\"template.*\"}",
+          "refId": "A",
+          "legendFormat": "{{instance}} {{datname}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "title": "Database Size (current)",
+      "type": "bargauge",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 57
+      },
+      "targets": [
+        {
+          "expr": "pg_database_size_bytes{datname!~\"template.*\"}",
+          "refId": "A",
+          "legendFormat": "{{instance}} {{datname}}",
+          "instant": true
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient"
+      }
+    },
+    {
+      "type": "row",
+      "title": "CONNECTION UTILISATION",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 64
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "title": "Connection % of max_connections",
+      "type": "gauge",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 65
+      },
+      "targets": [
+        {
+          "expr": "sum by (instance) (pg_stat_activity_count) / on(instance) pg_settings_max_connections * 100",
+          "refId": "A",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          },
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "description": "Pct of max_connections currently used."
+    },
+    {
+      "title": "max_connections Setting",
+      "type": "stat",
+      "gridPos": {
+        "h": 7,
+        "w": 4,
+        "x": 8,
+        "y": 65
+      },
+      "targets": [
+        {
+          "expr": "pg_settings_max_connections",
+          "refId": "A",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "title": "Connections by State (current)",
+      "type": "table",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 65
+      },
+      "targets": [
+        {
+          "expr": "pg_stat_activity_count{datname!=\"\"}",
+          "refId": "A",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Snapshot of connections by database and state"
+    },
+    {
+      "type": "row",
+      "title": "ETCD CLUSTER",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 72
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "title": "etcd Leader Changes",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 73
+      },
+      "targets": [
+        {
+          "expr": "rate(etcd_server_leader_changes_seen_total[5m])",
+          "refId": "A",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "description": "Should be near zero in steady state"
+    },
+    {
+      "title": "etcd Raft Proposals",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 73
+      },
+      "targets": [
+        {
+          "expr": "rate(etcd_server_proposals_committed_total[5m])",
+          "refId": "A",
+          "legendFormat": "committed {{instance}}"
+        },
+        {
+          "expr": "rate(etcd_server_proposals_failed_total[5m])",
+          "refId": "B",
+          "legendFormat": "failed {{instance}}"
+        },
+        {
+          "expr": "etcd_server_proposals_pending",
+          "refId": "C",
+          "legendFormat": "pending {{instance}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "title": "etcd DB Size",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 73
+      },
+      "targets": [
+        {
+          "expr": "etcd_mvcc_db_total_size_in_bytes",
+          "refId": "A",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "title": "etcd WAL Fsync p99",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 80
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, rate(etcd_disk_wal_fsync_duration_seconds_bucket[5m]))",
+          "refId": "A",
+          "legendFormat": "p99 {{instance}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "description": "99th pctl WAL fsync duration. Should be <10ms."
+    },
+    {
+      "title": "etcd gRPC Rate",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 80
+      },
+      "targets": [
+        {
+          "expr": "rate(grpc_server_started_total[5m])",
+          "refId": "A",
+          "legendFormat": "{{grpc_method}}"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      }
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": [
+    "postgresql",
+    "patroni",
+    "ha",
+    "etcd",
+    "replication"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {
+          "text": "Prometheus",
+          "value": "Prometheus"
+        }
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m"
+    ]
+  },
+  "timezone": "browser",
+  "title": "PostgreSQL HA Cluster - Patroni / etcd / HAProxy",
+  "uid": "pg-ha-patroni-cluster",
+  "version": 4
+}

@@ -1,0 +1,49 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "HA write (primary) :5000",
+      "Group": "pg-ha-cluster",
+      "Host": "localhost",
+      "Port": 5000,
+      "MaintenanceDB": "postgres",
+      "Username": "postgres",
+      "ConnectionParameters": { "sslmode": "prefer", "gssencmode": "disable", "connect_timeout": 10 }
+    },
+    "2": {
+      "Name": "HA read (replicas) :5001",
+      "Group": "pg-ha-cluster",
+      "Host": "localhost",
+      "Port": 5001,
+      "MaintenanceDB": "postgres",
+      "Username": "postgres",
+      "ConnectionParameters": { "sslmode": "prefer", "gssencmode": "disable", "connect_timeout": 10 }
+    },
+    "3": {
+      "Name": "patroni1 direct :5433",
+      "Group": "pg-ha-cluster nodes",
+      "Host": "localhost",
+      "Port": 5433,
+      "MaintenanceDB": "postgres",
+      "Username": "postgres",
+      "ConnectionParameters": { "sslmode": "prefer", "gssencmode": "disable", "connect_timeout": 10 }
+    },
+    "4": {
+      "Name": "patroni2 direct :5434",
+      "Group": "pg-ha-cluster nodes",
+      "Host": "localhost",
+      "Port": 5434,
+      "MaintenanceDB": "postgres",
+      "Username": "postgres",
+      "ConnectionParameters": { "sslmode": "prefer", "gssencmode": "disable", "connect_timeout": 10 }
+    },
+    "5": {
+      "Name": "patroni3 direct :5435",
+      "Group": "pg-ha-cluster nodes",
+      "Host": "localhost",
+      "Port": 5435,
+      "MaintenanceDB": "postgres",
+      "Username": "postgres",
+      "ConnectionParameters": { "sslmode": "prefer", "gssencmode": "disable", "connect_timeout": 10 }
+    }
+  }
+}

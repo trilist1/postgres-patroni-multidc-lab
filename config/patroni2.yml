@@ -1,0 +1,71 @@
+scope: pg-ha-cluster
+name: patroni2
+
+restapi:
+  listen: 0.0.0.0:8008
+  connect_address: patroni2:8008
+
+etcd3:
+  hosts: etcd1:2379,etcd2:2379,etcd3:2379
+
+bootstrap:
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 1048576
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+        max_connections: 200
+        max_worker_processes: 8
+        wal_level: replica
+        hot_standby: "on"
+        max_wal_senders: 10
+        max_replication_slots: 10
+        hot_standby_feedback: "on"
+        wal_log_hints: "on"
+        wal_keep_size: "512MB"
+        shared_buffers: "256MB"
+        work_mem: "8MB"
+        maintenance_work_mem: "128MB"
+        effective_cache_size: "768MB"
+        checkpoint_completion_target: 0.9
+        default_statistics_target: 100
+        logging_collector: "on"
+        log_directory: "log"
+        log_filename: "postgresql-%Y-%m-%d_%H%M%S.log"
+        log_statement: "ddl"
+        log_min_duration_statement: 1000
+        track_activities: "on"
+        track_counts: "on"
+        track_io_timing: "on"
+        track_functions: "all"
+        shared_preload_libraries: "pg_stat_statements"
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+  pg_hba:
+    - host replication replicator 0.0.0.0/0 scram-sha-256
+    - host all all 0.0.0.0/0 scram-sha-256
+
+postgresql:
+  listen: 0.0.0.0:5432
+  connect_address: patroni2:5432
+  data_dir: /var/lib/postgresql/data/patroni
+  pgpass: /tmp/pgpass0
+  authentication:
+    replication:
+      username: replicator
+      password: "ReplSecret2026"
+    superuser:
+      username: postgres
+      password: "SuperSecret2026"
+  parameters:
+    unix_socket_directories: "/var/run/postgresql"
+  create_replica_methods:
+    - basebackup
+  basebackup:
+    checkpoint: fast
+    max-rate: "100M"

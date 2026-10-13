@@ -1,0 +1,3 @@
+# Store every file byte-for-byte: container configs must stay LF,
+# patroni-ha-cluster.cmd must stay CRLF. No line-ending conversion.
+* -text
